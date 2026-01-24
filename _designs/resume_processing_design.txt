@@ -1,0 +1,389 @@
+Resume Partial Processing Design Document
+==========================================
+
+OVERVIEW:
+Add the ability to resume processing after a crash, interruption, or partial
+run. The tool should detect what's already been processed and skip those files.
+
+
+================================================================================
+PROBLEM STATEMENT
+================================================================================
+
+CURRENT BEHAVIOR:
+- Every run creates a NEW output folder (_pefProcessed, _pefProcessed(1), etc.)
+- No tracking of what's been processed
+- If interrupted, must restart from scratch or manually figure out progress
+- 10+ hour runs are vulnerable to power outages, crashes, etc.
+
+DESIRED BEHAVIOR:
+- Detect previously processed files and skip them
+- Resume from where we left off
+- Option to reprocess specific files if needed
+
+
+================================================================================
+APPROACH OPTIONS
+================================================================================
+
+OPTION A: State File (Recommended)
+----------------------------------
+Maintain a JSON state file that tracks processed files.
+
+Pros:
+  + Fast lookup (O(1) with set/dict)
+  + Survives across runs
+  + Can store additional info (timestamps, errors)
+  + Easy to inspect/edit manually if needed
+
+Cons:
+  - Extra file to manage
+  - Could get out of sync if files moved manually
+
+
+OPTION B: Scan Output Directory
+-------------------------------
+Check if destination file already exists.
+
+Pros:
+  + No extra state file
+  + Self-healing (reflects actual filesystem state)
+
+Cons:
+  - Slower (must check filesystem for each file)
+  - Can't distinguish "processed correctly" from "partially copied"
+  - Doesn't know if metadata was written successfully
+
+
+OPTION C: Hash-Based Tracking
+-----------------------------
+Store file hashes to detect already-processed files.
+
+Pros:
+  + Can detect if source file changed
+  + Very accurate
+
+Cons:
+  - Slow (must hash every file)
+  - Overkill for this use case
+
+
+RECOMMENDATION: Option A (State File) with Option B as fallback
+
+
+================================================================================
+DETAILED DESIGN: STATE FILE APPROACH
+================================================================================
+
+STATE FILE LOCATION:
+    {output_folder}/processing_state.json
+
+STATE FILE STRUCTURE:
+{
+    "version": 1,
+    "source_path": "D:\\Photos\\_Google Photos Backup\\Google Photos",
+    "started": "2024-01-15T10:30:00",
+    "last_updated": "2024-01-15T14:45:00",
+    "processed_jsons": {
+        "path/to/file1.json": {
+            "status": "success",
+            "output_file": "path/to/output/file1.jpg",
+            "timestamp": "2024-01-15T10:31:00"
+        },
+        "path/to/file2.json": {
+            "status": "success",
+            "output_file": "path/to/output/file2.jpg",
+            "timestamp": "2024-01-15T10:31:05"
+        },
+        "path/to/file3.json": {
+            "status": "error",
+            "error": "File not found",
+            "timestamp": "2024-01-15T10:31:10"
+        }
+    },
+    "unprocessed_files": [
+        "path/to/orphan1.jpg",
+        "path/to/orphan2.png"
+    ],
+    "stats": {
+        "total_jsons": 55000,
+        "processed": 32000,
+        "errors": 150,
+        "skipped": 0
+    }
+}
+
+
+================================================================================
+IMPLEMENTATION
+================================================================================
+
+NEW CLASS: ProcessingState
+
+class ProcessingState:
+    """Track processing progress for resume capability."""
+
+    def __init__(self, output_path):
+        self.state_file = os.path.join(output_path, "processing_state.json")
+        self.state = self._load_or_create()
+
+    def _load_or_create(self):
+        """Load existing state or create new."""
+        if os.path.exists(self.state_file):
+            with open(self.state_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {
+            "version": 1,
+            "source_path": None,
+            "started": datetime.now().isoformat(),
+            "last_updated": None,
+            "processed_jsons": {},
+            "unprocessed_files": [],
+            "stats": {"total_jsons": 0, "processed": 0, "errors": 0, "skipped": 0}
+        }
+
+    def is_processed(self, json_path):
+        """Check if a JSON file has already been processed."""
+        return json_path in self.state["processed_jsons"]
+
+    def mark_processed(self, json_path, output_file, status="success", error=None):
+        """Mark a JSON as processed."""
+        self.state["processed_jsons"][json_path] = {
+            "status": status,
+            "output_file": output_file,
+            "timestamp": datetime.now().isoformat()
+        }
+        if error:
+            self.state["processed_jsons"][json_path]["error"] = error
+
+        self.state["stats"]["processed"] += 1
+        if status == "error":
+            self.state["stats"]["errors"] += 1
+
+    def save(self):
+        """Persist state to disk."""
+        self.state["last_updated"] = datetime.now().isoformat()
+        with open(self.state_file, 'w', encoding='utf-8') as f:
+            json.dump(self.state, f, indent=2)
+
+    def get_progress(self):
+        """Return progress summary."""
+        stats = self.state["stats"]
+        return f"{stats['processed']}/{stats['total_jsons']} ({stats['errors']} errors)"
+
+
+================================================================================
+MODIFIED MAIN LOOP
+================================================================================
+
+CURRENT:
+    for jsonpath in tqdm(jsons, desc="Files processed"):
+        jsondata = unpack_json(jsonpath, saveto)
+        # ... process ...
+
+WITH RESUME:
+    # Initialize state tracker
+    state = ProcessingState(saveto)
+    state.state["source_path"] = path
+    state.state["stats"]["total_jsons"] = len(jsons)
+
+    # Filter out already-processed JSONs
+    jsons_to_process = [j for j in jsons if not state.is_processed(j)]
+    skipped = len(jsons) - len(jsons_to_process)
+
+    if skipped > 0:
+        print(f"Resuming: skipping {skipped} already-processed files")
+        state.state["stats"]["skipped"] = skipped
+
+    for jsonpath in tqdm(jsons_to_process, desc="Files processed"):
+        jsondata = unpack_json(jsonpath, saveto)
+
+        if not jsondata:
+            state.mark_processed(jsonpath, None, status="error", error="Invalid JSON")
+            continue
+
+        exist, files_ = find_file(jsondata, file_index, suffixes)
+
+        for file in files_:
+            if exist:
+                try:
+                    procpath = copy_modify(file, jsondata["date"], ...)
+                    state.mark_processed(jsonpath, procpath, status="success")
+                except Exception as e:
+                    state.mark_processed(jsonpath, None, status="error", error=str(e))
+            else:
+                state.mark_processed(jsonpath, None, status="not_found",
+                                     error=f"No matching file for {jsondata['title']}")
+
+        # Save state periodically (every 100 files) to survive crashes
+        if state.state["stats"]["processed"] % 100 == 0:
+            state.save()
+
+    # Final save
+    state.save()
+
+
+================================================================================
+NEW COMMAND LINE ARGUMENTS
+================================================================================
+
+    parser.add_argument("--resume",
+        help="Resume processing in existing output folder (don't create new)",
+        action="store_true")
+
+    parser.add_argument("--force",
+        help="Reprocess all files, ignoring previous state",
+        action="store_true")
+
+    parser.add_argument("--output",
+        help="Specify exact output folder (for resuming specific run)",
+        type=str, default=None)
+
+
+BEHAVIOR MATRIX:
+
+| Flags              | Behavior                                          |
+|--------------------|---------------------------------------------------|
+| (none)             | Create new _pefProcessed folder, process all      |
+| --resume           | Find latest _pefProcessed, resume from state file |
+| --output PATH      | Use specific folder, resume if state exists       |
+| --force            | Create new folder, ignore any existing state      |
+| --resume --force   | Use existing folder but reprocess everything      |
+
+
+================================================================================
+FINDING EXISTING OUTPUT FOLDER
+================================================================================
+
+def find_latest_output(source_path, destination=None):
+    """Find the most recent _pefProcessed folder for resuming."""
+
+    if destination:
+        base = destination
+    else:
+        base = os.path.dirname(source_path)
+
+    # Look for _pefProcessed, _pefProcessed(1), _pefProcessed(2), etc.
+    candidates = []
+    for item in os.listdir(base):
+        if item.endswith("_pefProcessed") or "_pefProcessed(" in item:
+            full_path = os.path.join(base, item)
+            if os.path.isdir(full_path):
+                state_file = os.path.join(full_path, "processing_state.json")
+                if os.path.exists(state_file):
+                    # Get modification time for sorting
+                    mtime = os.path.getmtime(state_file)
+                    candidates.append((full_path, mtime))
+
+    if not candidates:
+        return None
+
+    # Return most recently modified
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return candidates[0][0]
+
+
+================================================================================
+MODIFIED OUTPUT FOLDER LOGIC
+================================================================================
+
+CURRENT (in main()):
+    saveto = checkout_dir(path + "_pefProcessed", onlynew=True)
+
+WITH RESUME:
+    if args.resume:
+        saveto = find_latest_output(path, destination)
+        if not saveto:
+            print("No existing output folder found. Starting fresh.")
+            saveto = checkout_dir(path + "_pefProcessed", onlynew=True)
+        else:
+            print(f"Resuming in: {saveto}")
+    elif args.output:
+        saveto = args.output
+        if not os.path.exists(saveto):
+            os.makedirs(saveto)
+    else:
+        saveto = checkout_dir(path + "_pefProcessed", onlynew=True)
+
+
+================================================================================
+GRACEFUL INTERRUPT HANDLING
+================================================================================
+
+Add signal handler to save state on Ctrl+C:
+
+import signal
+
+def setup_interrupt_handler(state):
+    """Save state if user presses Ctrl+C."""
+
+    def handler(signum, frame):
+        print("\n\nInterrupted! Saving progress...")
+        state.save()
+        print(f"Progress saved. Resume with: python pef.py --resume -p <path>")
+        print(f"Processed: {state.get_progress()}")
+        sys.exit(1)
+
+    signal.signal(signal.SIGINT, handler)
+
+# In main():
+    state = ProcessingState(saveto)
+    setup_interrupt_handler(state)
+
+
+================================================================================
+PROGRESS DISPLAY ENHANCEMENTS
+================================================================================
+
+Show resume info in progress bar:
+
+    # Calculate what's left
+    remaining = len(jsons_to_process)
+    total = len(jsons)
+    already_done = total - remaining
+
+    # Custom progress bar showing overall progress
+    with tqdm(total=total, initial=already_done, desc="Overall progress") as pbar:
+        for jsonpath in jsons_to_process:
+            # ... process ...
+            pbar.update(1)
+
+
+================================================================================
+IMPLEMENTATION ORDER
+================================================================================
+
+1. Create ProcessingState class
+2. Modify main() to initialize and use state tracker
+3. Add periodic state saving (every 100 files)
+4. Add --resume, --force, --output arguments
+5. Implement find_latest_output()
+6. Modify output folder selection logic
+7. Add interrupt handler for graceful Ctrl+C
+8. Update progress display to show resume info
+9. Test: interrupt mid-run, resume, verify no duplicates
+
+
+================================================================================
+EDGE CASES TO HANDLE
+================================================================================
+
+1. Source path changed between runs
+   -> Warn user, require --force to continue
+
+2. State file corrupted
+   -> Backup old state, start fresh
+
+3. Output files manually deleted
+   -> State says processed but file missing
+   -> Option: verify output exists, reprocess if missing
+
+4. Different suffixes used between runs
+   -> Store suffixes in state, warn if changed
+
+5. Same file processed multiple times (duplicates in source)
+   -> Already handled by get_unique_path(), state tracks JSON not output
+
+================================================================================
+STATUS: NOT YET IMPLEMENTED
+================================================================================
