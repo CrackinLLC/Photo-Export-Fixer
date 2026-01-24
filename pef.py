@@ -621,8 +621,12 @@ def extend_metadata(source_path, output_path, suffixes):
     skipped = 0
     errors = 0
 
+    total = len(jsons)
     with exiftool.ExifToolHelper(executable=exiftool_path) as et:
-        for jsonpath in tqdm(jsons, desc="Extending metadata"):
+        for i, jsonpath in enumerate(tqdm(jsons, desc="Extending metadata")):
+            # Print progress every 1000 files
+            if i % 1000 == 0 and i > 0:
+                print(f"\n  Progress: {i}/{total} ({i*100//total}%) - Updated: {updated}, Skipped: {skipped}, Errors: {errors}")
             try:
                 # Read JSON file directly for full data
                 with open(jsonpath, "r", encoding='utf-8') as f:
