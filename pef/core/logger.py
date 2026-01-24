@@ -2,7 +2,7 @@
 
 import os
 import time
-from typing import Optional, TextIO, List, Dict, Any
+from typing import Optional, TextIO, List, Dict, Any, Union
 
 
 class BufferedLogger:
@@ -33,12 +33,12 @@ class BufferedLogger:
         self.filename = filename
         self.filepath = os.path.join(output_dir, filename)
         self._handle: Optional[TextIO] = None
-        self._open()
 
     def _open(self) -> None:
-        """Open the log file for writing."""
-        os.makedirs(self.output_dir, exist_ok=True)
-        self._handle = open(self.filepath, "a", encoding="utf-8")
+        """Open the log file for writing (lazy initialization)."""
+        if self._handle is None:
+            os.makedirs(self.output_dir, exist_ok=True)
+            self._handle = open(self.filepath, "a", encoding="utf-8")
 
     def log(self, message: str) -> None:
         """Write a timestamped message to the log.
@@ -46,9 +46,9 @@ class BufferedLogger:
         Args:
             message: Message to log.
         """
-        if self._handle:
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            self._handle.write(f"{timestamp} - {message}\n")
+        self._open()  # Lazy open on first log
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        self._handle.write(f"{timestamp} - {message}\n")
 
     def flush(self) -> None:
         """Flush the log buffer to disk."""
@@ -173,7 +173,7 @@ class NullLogger:
         return True
 
 
-def create_logger(output_dir: str, enabled: bool = True) -> BufferedLogger:
+def create_logger(output_dir: str, enabled: bool = True) -> Union[BufferedLogger, NullLogger]:
     """Create a logger instance.
 
     Args:

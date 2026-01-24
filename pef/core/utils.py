@@ -101,19 +101,3 @@ def normalize_path(path: str) -> str:
         Normalized path.
     """
     return os.path.normpath(os.path.expanduser(path.strip()))
-
-
-def truncate_filename(name: str, ext: str, max_length: int = 51) -> str:
-    """Truncate a filename to fit within max length (Google Takeout limit).
-
-    Args:
-        name: Filename without extension.
-        ext: File extension (including dot).
-        max_length: Maximum total length (default 51 for Google Takeout).
-
-    Returns:
-        Truncated name if needed.
-    """
-    if len(name + ext) > max_length:
-        return name[0:max_length - len(ext)]
-    return name

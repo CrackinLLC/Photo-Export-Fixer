@@ -1,8 +1,11 @@
 """Settings/preferences management for GUI."""
 
+import logging
 import os
 import json
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings:
@@ -40,16 +43,16 @@ class Settings:
                 with open(self._config_path, "r") as f:
                     loaded = json.load(f)
                     self._settings.update(loaded)
-        except Exception:
-            pass  # Use defaults on error
+        except Exception as e:
+            logger.debug(f"Error loading settings from {self._config_path}: {e}")
 
     def save(self):
         """Save settings to file."""
         try:
             with open(self._config_path, "w") as f:
                 json.dump(self._settings, f, indent=2)
-        except Exception:
-            pass  # Ignore save errors
+        except Exception as e:
+            logger.debug(f"Error saving settings to {self._config_path}: {e}")
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a setting value."""

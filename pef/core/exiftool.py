@@ -3,14 +3,17 @@
 Handles finding, downloading, and initializing ExifTool.
 """
 
+import logging
 import os
 import shutil
 import sys
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 # ExifTool paths
-EXIFTOOL_DIR = "tools/exiftool"
-EXIFTOOL_EXE = "exiftool.exe"
+EXIFTOOL_DIR = os.path.join("tools", "exiftool")
+EXIFTOOL_EXE = "exiftool.exe" if sys.platform == "win32" else "exiftool"
 
 
 def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
@@ -47,7 +50,7 @@ def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
             return local_path
 
     # Not found
-    print_install_instructions()
+    logger.warning("ExifTool not found. Install from https://exiftool.org/")
     return None
 
 
@@ -62,6 +65,7 @@ def auto_download_exiftool(base_dir: str) -> bool:
     Returns:
         True if download succeeded, False otherwise.
     """
+    import urllib.error
     import urllib.request
     import zipfile
 
@@ -72,17 +76,17 @@ def auto_download_exiftool(base_dir: str) -> bool:
 
     try:
         # Get latest version number from exiftool.org
-        print("Checking for latest ExifTool version...")
+        logger.info("Checking for latest ExifTool version...")
         with urllib.request.urlopen("https://exiftool.org/ver.txt") as response:
             version = response.read().decode().strip()
-        print(f"Latest version: {version}")
+        logger.info(f"Latest version: {version}")
 
         # Download from SourceForge (64-bit Windows)
         url = f"https://sourceforge.net/projects/exiftool/files/exiftool-{version}_64.zip/download"
-        print(f"Downloading ExifTool {version}...")
+        logger.info(f"Downloading ExifTool {version}...")
         urllib.request.urlretrieve(url, zip_path)
 
-        print("Extracting...")
+        logger.info("Extracting...")
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(tools_dir)
 
@@ -99,24 +103,33 @@ def auto_download_exiftool(base_dir: str) -> bool:
                         dst = os.path.join(tools_dir, EXIFTOOL_EXE)
                     shutil.move(src, dst)
                 # Remove the now-empty subdirectory
-                os.rmdir(item_path)
+                shutil.rmtree(item_path, ignore_errors=True)
                 break
 
         os.remove(zip_path)
-        print("ExifTool installed successfully!")
+        logger.info("ExifTool installed successfully!")
         return True
 
+    except urllib.error.URLError as e:
+        logger.warning(f"Network error downloading ExifTool: {e}")
+        return False
+    except zipfile.BadZipFile as e:
+        logger.warning(f"Downloaded file is corrupted: {e}")
+        return False
+    except OSError as e:
+        logger.warning(f"File system error during ExifTool install: {e}")
+        return False
     except Exception as e:
-        print(f"Auto-download failed: {e}")
+        logger.warning(f"Auto-download failed: {e}")
         return False
 
 
 def print_install_instructions() -> None:
     """Print manual installation instructions."""
-    print("ExifTool not found. Please install it:")
-    print("  1. Download from https://exiftool.org/")
-    print("  2. Extract and rename exiftool(-k).exe to exiftool.exe")
-    print("  3. Place in PATH or in ./tools/exiftool/")
+    logger.info("ExifTool not found. Please install it:")
+    logger.info("  1. Download from https://exiftool.org/")
+    logger.info("  2. Extract and rename exiftool(-k).exe to exiftool.exe")
+    logger.info("  3. Place in PATH or in ./tools/exiftool/")
 
 
 def is_exiftool_available() -> bool:
@@ -169,7 +182,7 @@ class ExifToolManager:
         try:
             import exiftool
         except ImportError:
-            print("pyexiftool not installed. Run: pip install pyexiftool")
+            logger.warning("pyexiftool not installed. Run: pip install pyexiftool")
             return False
 
         self._exiftool_path = get_exiftool_path(self._base_dir)
@@ -181,7 +194,7 @@ class ExifToolManager:
             self._helper.run()
             return True
         except Exception as e:
-            print(f"Failed to start ExifTool: {e}")
+            logger.error(f"Failed to start ExifTool: {e}")
             return False
 
     def stop(self) -> None:
@@ -189,8 +202,8 @@ class ExifToolManager:
         if self._helper:
             try:
                 self._helper.terminate()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error stopping ExifTool: {e}")
             self._helper = None
 
     def write_tags(self, filepath: str, tags: dict) -> bool:
@@ -209,7 +222,8 @@ class ExifToolManager:
         try:
             self._helper.set_tags(filepath, tags)
             return True
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to write tags to {filepath}: {e}")
             return False
 
     def read_tags(self, filepath: str, tags: Optional[list] = None) -> dict:
@@ -231,7 +245,8 @@ class ExifToolManager:
             else:
                 result = self._helper.get_metadata(filepath)
             return result[0] if result else {}
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to read tags from {filepath}: {e}")
             return {}
 
     @property

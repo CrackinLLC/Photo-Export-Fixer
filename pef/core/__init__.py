@@ -18,7 +18,6 @@ from pef.core.utils import (
     checkout_dir,
     get_album_name,
     normalize_path,
-    truncate_filename,
 )
 
 from pef.core.logger import (
@@ -84,7 +83,6 @@ __all__ = [
     "checkout_dir",
     "get_album_name",
     "normalize_path",
-    "truncate_filename",
     # Logger
     "BufferedLogger",
     "SummaryLogger",

@@ -7,6 +7,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from pef.core.orchestrator import PEFOrchestrator
 from pef.gui.progress import ProgressDialog
+from pef.gui.settings import Settings
 
 
 class PEFMainWindow:
@@ -19,13 +20,19 @@ class PEFMainWindow:
         self.root.geometry("600x400")
         self.root.minsize(500, 350)
 
+        # Load settings
+        self.settings = Settings()
+
         # Variables
-        self.source_path = tk.StringVar()
-        self.dest_path = tk.StringVar()
-        self.write_exif = tk.BooleanVar(value=True)
+        self.source_path = tk.StringVar(value=self.settings.get("last_source_path", ""))
+        self.dest_path = tk.StringVar(value=self.settings.get("last_dest_path", ""))
+        self.write_exif = tk.BooleanVar(value=self.settings.get("write_exif", True))
 
         # Build UI
         self._create_widgets()
+
+        # Save settings on close
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _create_widgets(self):
         """Create and layout all widgets."""
@@ -123,6 +130,7 @@ class PEFMainWindow:
         path = filedialog.askdirectory(title="Select Google Takeout Directory")
         if path:
             self.source_path.set(path)
+            self.settings.set("last_source_path", path)
             # Auto-fill destination if empty
             if not self.dest_path.get():
                 self.dest_path.set(f"{path}_pefProcessed")
@@ -132,6 +140,7 @@ class PEFMainWindow:
         path = filedialog.askdirectory(title="Select Destination Directory")
         if path:
             self.dest_path.set(path)
+            self.settings.set("last_dest_path", path)
 
     def _validate_source(self) -> bool:
         """Validate source path exists."""
@@ -144,40 +153,51 @@ class PEFMainWindow:
             return False
         return True
 
-    def _on_dry_run(self):
-        """Handle dry run button click."""
-        if not self._validate_source():
-            return
+    def _run_async(self, status_msg: str, dialog_title: str, operation, on_complete):
+        """Run an operation asynchronously with progress dialog.
 
-        self.status_var.set("Running dry run...")
-
-        # Create progress dialog
-        progress = ProgressDialog(self.root, "Dry Run Analysis")
+        Args:
+            status_msg: Status bar message during operation.
+            dialog_title: Title for progress dialog.
+            operation: Callable(orchestrator, progress_callback) -> result.
+            on_complete: Callable(result) to handle completion (should set status).
+        """
+        self.status_var.set(status_msg)
+        progress = ProgressDialog(self.root, dialog_title)
 
         def run():
+            success = False
             try:
                 orchestrator = PEFOrchestrator(
                     source_path=self.source_path.get(),
                     dest_path=self.dest_path.get() or None,
                     write_exif=self.write_exif.get()
                 )
-
-                result = orchestrator.dry_run(
-                    on_progress=lambda c, t, m: self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
-                )
-
-                # Show results
-                self.root.after(0, lambda: self._show_dry_run_results(result))
-
+                progress_cb = lambda c, t, m: self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
+                result = operation(orchestrator, progress_cb)
+                self.root.after(0, lambda: on_complete(result))
+                success = True
             except Exception as e:
                 self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
             finally:
                 self.root.after(0, progress.close)
-                self.root.after(0, lambda: self.status_var.set("Ready"))
+                if not success:
+                    self.root.after(0, lambda: self.status_var.set("Ready"))
 
-        # Run in background thread
         thread = threading.Thread(target=run, daemon=False)
         thread.start()
+
+    def _on_dry_run(self):
+        """Handle dry run button click."""
+        if not self._validate_source():
+            return
+
+        self._run_async(
+            "Running dry run...",
+            "Dry Run Analysis",
+            lambda orch, cb: orch.dry_run(on_progress=cb),
+            self._show_dry_run_results
+        )
 
     def _show_dry_run_results(self, result):
         """Show dry run results in a dialog."""
@@ -198,6 +218,7 @@ Metadata available:
 
 ExifTool: {"Available" if result.exiftool_available else "Not found"}"""
 
+        self.status_var.set(f"Dry run complete: {result.matched_count} files would be processed")
         messagebox.showinfo("Dry Run Results", msg)
 
     def _on_process(self):
@@ -212,34 +233,12 @@ ExifTool: {"Available" if result.exiftool_available else "Not found"}"""
         ):
             return
 
-        self.status_var.set("Processing...")
-
-        # Create progress dialog
-        progress = ProgressDialog(self.root, "Processing Files")
-
-        def run():
-            try:
-                orchestrator = PEFOrchestrator(
-                    source_path=self.source_path.get(),
-                    dest_path=self.dest_path.get() or None,
-                    write_exif=self.write_exif.get()
-                )
-
-                result = orchestrator.process(
-                    on_progress=lambda c, t, m: self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
-                )
-
-                # Show results
-                self.root.after(0, lambda: self._show_process_results(result))
-
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
-            finally:
-                self.root.after(0, progress.close)
-                self.root.after(0, lambda: self.status_var.set("Ready"))
-
-        thread = threading.Thread(target=run, daemon=False)
-        thread.start()
+        self._run_async(
+            "Processing...",
+            "Processing Files",
+            lambda orch, cb: orch.process(on_progress=cb),
+            self._show_process_results
+        )
 
     def _show_process_results(self, result):
         """Show processing results."""
@@ -256,6 +255,7 @@ Time: {result.elapsed_time} seconds
 Output saved to:
 {result.output_dir}"""
 
+        self.status_var.set(f"Complete: {result.stats.processed} files processed in {result.elapsed_time}s")
         messagebox.showinfo("Processing Complete", msg)
 
     def _on_extend(self):
@@ -275,23 +275,35 @@ Output saved to:
             )
             return
 
+        # Extend requires custom orchestrator config (write_exif=True always)
         self.status_var.set("Extending metadata...")
-
         progress = ProgressDialog(self.root, "Extending Metadata")
 
         def run():
+            success = False
             try:
                 orchestrator = PEFOrchestrator(
                     source_path=self.source_path.get(),
                     dest_path=dest,
                     write_exif=True
                 )
+                progress_cb = lambda c, t, m: self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
+                result = orchestrator.extend(on_progress=progress_cb)
+                self.root.after(0, lambda: self._show_extend_results(result))
+                success = True
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+            finally:
+                self.root.after(0, progress.close)
+                if not success:
+                    self.root.after(0, lambda: self.status_var.set("Ready"))
 
-                result = orchestrator.extend(
-                    on_progress=lambda c, t, m: self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
-                )
+        thread = threading.Thread(target=run, daemon=False)
+        thread.start()
 
-                msg = f"""Extend Complete!
+    def _show_extend_results(self, result):
+        """Show extend metadata results in a dialog."""
+        msg = f"""Extend Complete!
 
 Updated: {result.stats.processed} files
   With GPS: {result.stats.with_gps}
@@ -302,16 +314,16 @@ Errors: {result.stats.errors}
 
 Time: {result.elapsed_time} seconds"""
 
-                self.root.after(0, lambda: messagebox.showinfo("Extend Complete", msg))
+        self.status_var.set(f"Extend complete: {result.stats.processed} files updated in {result.elapsed_time}s")
+        messagebox.showinfo("Extend Complete", msg)
 
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
-            finally:
-                self.root.after(0, progress.close)
-                self.root.after(0, lambda: self.status_var.set("Ready"))
-
-        thread = threading.Thread(target=run, daemon=False)
-        thread.start()
+    def _on_close(self):
+        """Handle window close - save settings."""
+        self.settings.set("last_source_path", self.source_path.get())
+        self.settings.set("last_dest_path", self.dest_path.get())
+        self.settings.set("write_exif", self.write_exif.get())
+        self.settings.save()
+        self.root.destroy()
 
     def run(self):
         """Start the application main loop."""

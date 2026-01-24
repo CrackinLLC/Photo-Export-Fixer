@@ -1,12 +1,14 @@
 """Command-line interface for Photo Export Fixer."""
 
 import argparse
+import os
 import sys
 from typing import List, Optional
 
 from tqdm import tqdm
 
 from pef.core.orchestrator import PEFOrchestrator
+from pef.core.matcher import DEFAULT_SUFFIXES
 from pef.core.utils import exists, normalize_path
 from pef.cli.wizard import run_wizard
 
@@ -28,9 +30,6 @@ More details can be found in the README file.
 Git repository: https://github.com/CrackinLLC/Photo-Export-Fixer
 """
 
-# Default suffixes
-DEFAULT_SUFFIXES = ["", "-edited"]
-
 
 def create_progress_callback(desc: str = "Processing"):
     """Create a tqdm-based progress callback.
@@ -47,7 +46,7 @@ def create_progress_callback(desc: str = "Processing"):
         pbar.total = total
         pbar.n = current
         # Truncate message to fit
-        pbar.set_description(message[:40] if len(message) > 40 else message)
+        pbar.set_description(message[:50] if len(message) > 50 else message)
         pbar.refresh()
 
     return callback, pbar
@@ -81,7 +80,7 @@ def run_dry_run(
 
     if extend_mode:
         print(f"Source JSONs: {path}")
-        print(f"Target files: {dest}/Processed")
+        print(f"Target files: {os.path.join(dest, 'Processed')}")
     else:
         print(f"Source: {path}")
         print(f"Destination: {dest}")

@@ -95,9 +95,14 @@ class TestGetAlbumName:
         path = os.path.join("photos", "Vacation 2023", "photo.jpg")
         assert get_album_name(path) == "Vacation 2023"
 
-    def test_handles_windows_paths(self):
-        # Use os.path.join to create platform-appropriate path
-        path = os.path.join("C:", "Photos", "Album", "image.png")
+    def test_handles_nested_paths(self):
+        # Test with deeply nested path structure
+        path = os.path.join("root", "Photos", "Album", "image.png")
+        assert get_album_name(path) == "Album"
+
+    def test_handles_single_level(self):
+        # Test with minimal path
+        path = os.path.join("Album", "image.png")
         assert get_album_name(path) == "Album"
 
 

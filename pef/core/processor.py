@@ -3,12 +3,16 @@
 Handles copying, date modification, and metadata writing.
 """
 
+import logging
 import os
 import shutil
+import warnings
 from datetime import datetime
 from typing import Optional, List, Any
 
 import filedate
+
+logger = logging.getLogger(__name__)
 
 from pef.core.models import FileInfo, JsonMetadata, ProcessingStats, ProgressCallback
 from pef.core.utils import checkout_dir, get_unique_path
@@ -82,7 +86,8 @@ class FileProcessor:
         """Copy a file, set its dates, and write metadata.
 
         Args:
-            file: Source file info.
+            file: Source file info. Note: This object is mutated to set
+                  procpath and jsonpath attributes.
             metadata: JSON metadata for this file.
 
         Returns:
@@ -114,12 +119,8 @@ class FileProcessor:
         file.procpath = dest_path
         file.jsonpath = metadata.filepath
 
-        # Update stats
+        # Update stats (GPS/people counted per JSON by orchestrator)
         self.stats.processed += 1
-        if metadata.has_location():
-            self.stats.with_gps += 1
-        if metadata.has_people():
-            self.stats.with_people += 1
 
         if self.logger:
             self.logger.log(f"Processed: {file.filename}")
@@ -220,17 +221,19 @@ class FileProcessor:
         return self._write_metadata(filepath, metadata)
 
 
-# Backwards-compatible function
+# Backwards-compatible function (deprecated)
 def copy_modify(
     file: dict,
     date: datetime,
     copyto: str,
     geo_data: Optional[dict] = None,
     people: Optional[list] = None,
-    exiftool_helper: Any = None,
-    saveto: Optional[str] = None
+    exiftool_helper: Any = None
 ) -> str:
     """Copy and modify a file (backwards compatible).
+
+    .. deprecated::
+        Use FileProcessor.process_file() instead.
 
     Args:
         file: Dict with filename, filepath, albumname keys.
@@ -239,11 +242,15 @@ def copy_modify(
         geo_data: Optional Google geoData dict.
         people: Optional Google people list.
         exiftool_helper: Optional ExifToolHelper instance.
-        saveto: Optional log directory.
 
     Returns:
         Path to copied file.
     """
+    warnings.warn(
+        "copy_modify() is deprecated. Use FileProcessor.process_file() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     from pef.core.metadata import build_gps_tags_from_dict, build_people_tags_from_list
 
     # Create album directory
@@ -270,7 +277,7 @@ def copy_modify(
         if tags:
             try:
                 exiftool_helper.set_tags(dest_path, tags)
-            except Exception:
-                pass  # Silently continue
+            except Exception as e:
+                logger.debug(f"Failed to write EXIF to {dest_path}: {e}")
 
     return dest_path

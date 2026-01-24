@@ -9,6 +9,7 @@ to their corresponding media files, including:
 
 import os
 import re
+import warnings
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict
 
@@ -185,13 +186,16 @@ class FileMatcher:
         )
 
 
-# Convenience function for backwards compatibility
+# Convenience function for backwards compatibility (deprecated)
 def find_file(
     jsondata: dict,
     file_index: dict,
     suffixes: List[str]
 ) -> Tuple[bool, List[dict]]:
     """Find file matching JSON metadata (backwards compatible).
+
+    .. deprecated::
+        Use FileMatcher.find_match() instead.
 
     Args:
         jsondata: Dict with "title" and "filepath" keys.
@@ -200,10 +204,12 @@ def find_file(
 
     Returns:
         Tuple of (found: bool, files: list of dicts).
-
-    Note:
-        New code should use FileMatcher class directly.
     """
+    warnings.warn(
+        "find_file() is deprecated. Use FileMatcher.find_match() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     matcher = FileMatcher(file_index, suffixes)
     result = matcher.find_match(jsondata["filepath"], jsondata["title"])
 

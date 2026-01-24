@@ -1,6 +1,7 @@
 """File and directory scanning for Photo Export Fixer."""
 
 import os
+import warnings
 from typing import List, Dict, Tuple, Optional
 
 from pef.core.models import FileInfo, FileIndex, ProgressCallback
@@ -154,12 +155,12 @@ def scan_directory(
     return scanner.jsons, scanner.files, scanner.file_index
 
 
-# Backwards-compatible function signature
+# Backwards-compatible function signature (deprecated)
 def get_file_names(path: str) -> Tuple[List[str], List[Dict], Dict]:
     """Scan directory and return files (backwards compatible).
 
-    This returns dicts instead of FileInfo objects for compatibility
-    with existing code. New code should use FileScanner directly.
+    .. deprecated::
+        Use FileScanner class directly instead.
 
     Args:
         path: Directory to scan.
@@ -167,6 +168,11 @@ def get_file_names(path: str) -> Tuple[List[str], List[Dict], Dict]:
     Returns:
         Tuple of (json_paths, file_dicts, file_index_dicts).
     """
+    warnings.warn(
+        "get_file_names() is deprecated. Use FileScanner class directly instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     scanner = FileScanner(path)
     scanner.scan()
 

@@ -1,8 +1,9 @@
 """Tests for pef.core.matcher module."""
 
+import warnings
 import pytest
 
-from pef.core.matcher import FileMatcher, ParsedTitle
+from pef.core.matcher import FileMatcher, ParsedTitle, find_file, DEFAULT_SUFFIXES
 from pef.core.models import FileInfo
 
 
@@ -99,3 +100,76 @@ class TestFileMatcher:
 
         assert result.found is False
         assert len(result.files) == 0
+
+
+class TestFindFile:
+    """Tests for find_file() backwards-compatible function."""
+
+    @pytest.fixture
+    def dict_index(self):
+        """Create index using dict format for backwards compat."""
+        return {
+            ("Album1", "photo.jpg"): [
+                {"filename": "photo.jpg", "filepath": "/path/Album1/photo.jpg", "albumname": "Album1"}
+            ],
+            ("Album1", "photo-edited.jpg"): [
+                {"filename": "photo-edited.jpg", "filepath": "/path/Album1/photo-edited.jpg", "albumname": "Album1"}
+            ],
+        }
+
+    def test_emits_deprecation_warning(self, dict_index):
+        jsondata = {"title": "photo.jpg", "filepath": "/Album1/photo.jpg.json"}
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            find_file(jsondata, dict_index, DEFAULT_SUFFIXES)
+
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+
+    def test_returns_tuple(self, dict_index):
+        jsondata = {"title": "photo.jpg", "filepath": "/Album1/photo.jpg.json"}
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = find_file(jsondata, dict_index, DEFAULT_SUFFIXES)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_finds_match(self, dict_index):
+        jsondata = {"title": "photo.jpg", "filepath": "/Album1/photo.jpg.json"}
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            found, files = find_file(jsondata, dict_index, DEFAULT_SUFFIXES)
+
+        assert found is True
+        assert len(files) == 1
+        assert files[0]["filename"] == "photo.jpg"
+
+    def test_not_found(self, dict_index):
+        jsondata = {"title": "missing.jpg", "filepath": "/Album1/missing.jpg.json"}
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            found, files = find_file(jsondata, dict_index, DEFAULT_SUFFIXES)
+
+        assert found is False
+        # When not found, returns a list with json info for logging purposes
+        assert len(files) == 1
+        assert files[0]["title"] == "missing.jpg"
+
+
+class TestDefaultSuffixes:
+    """Tests for DEFAULT_SUFFIXES constant."""
+
+    def test_default_suffixes_exists(self):
+        assert DEFAULT_SUFFIXES is not None
+        assert isinstance(DEFAULT_SUFFIXES, list)
+
+    def test_default_suffixes_contains_empty(self):
+        assert "" in DEFAULT_SUFFIXES
+
+    def test_default_suffixes_contains_edited(self):
+        assert "-edited" in DEFAULT_SUFFIXES

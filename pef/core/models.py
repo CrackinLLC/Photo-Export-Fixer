@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, List, Dict, Callable, Any
+from typing import Optional, List, Dict, Callable, Any, Tuple
 
 
 @dataclass
@@ -113,9 +113,38 @@ class ProcessingResult:
     errors: List[Dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass
+class DryRunResult:
+    """Results from a dry-run analysis."""
+    json_count: int = 0
+    file_count: int = 0
+    matched_count: int = 0
+    unmatched_json_count: int = 0
+    unmatched_file_count: int = 0
+    with_gps: int = 0
+    with_people: int = 0
+    exiftool_available: bool = False
+    exiftool_path: Optional[str] = None
+    errors: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ProcessResult:
+    """Results from a processing run."""
+    stats: ProcessingStats
+    output_dir: str
+    processed_dir: str
+    unprocessed_dir: str
+    log_file: str
+    elapsed_time: float
+    start_time: str
+    end_time: str
+    errors: List[str] = field(default_factory=list)
+
+
 # Type aliases for callbacks
 # (current_item, total_items, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
 
 # File index type: (albumname, filename) -> list of FileInfo
-FileIndex = Dict[tuple, List[FileInfo]]
+FileIndex = Dict[Tuple[str, str], List[FileInfo]]

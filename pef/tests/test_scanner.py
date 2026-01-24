@@ -1,9 +1,10 @@
 """Tests for pef.core.scanner module."""
 
 import os
+import warnings
 import pytest
 
-from pef.core.scanner import FileScanner
+from pef.core.scanner import FileScanner, scan_directory, get_file_names
 from pef.core.models import FileInfo
 
 
@@ -77,3 +78,65 @@ class TestFileScanner:
         scanner = FileScanner(sample_takeout)
         scanner.scan()
         assert scanner.is_scanned is True
+
+    def test_empty_directory(self, temp_dir):
+        scanner = FileScanner(temp_dir)
+        scanner.scan()
+        assert scanner.json_count == 0
+        assert scanner.file_count == 0
+
+
+class TestScanDirectory:
+    """Tests for scan_directory() convenience function."""
+
+    def test_returns_tuple(self, sample_takeout):
+        result = scan_directory(sample_takeout)
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+
+    def test_finds_files(self, sample_takeout):
+        jsons, files, index = scan_directory(sample_takeout)
+        assert len(jsons) == 3
+        assert len(files) == 5
+        assert isinstance(index, dict)
+
+
+class TestGetFileNames:
+    """Tests for get_file_names() backwards-compatible function."""
+
+    def test_returns_tuple(self, sample_takeout):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = get_file_names(sample_takeout)
+
+            # Should emit deprecation warning
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+
+    def test_returns_correct_types(self, sample_takeout):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            jsons, files, index = get_file_names(sample_takeout)
+
+        # jsons is list of paths
+        assert isinstance(jsons, list)
+        assert all(isinstance(j, str) for j in jsons)
+
+        # files is list of dicts
+        assert isinstance(files, list)
+        assert all(isinstance(f, dict) for f in files)
+        assert all("filename" in f and "filepath" in f for f in files)
+
+        # index is dict
+        assert isinstance(index, dict)
+
+    def test_correct_counts(self, sample_takeout):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            jsons, files, index = get_file_names(sample_takeout)
+
+        assert len(jsons) == 3
+        assert len(files) == 5

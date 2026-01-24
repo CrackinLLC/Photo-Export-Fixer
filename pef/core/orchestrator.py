@@ -4,16 +4,18 @@ Coordinates scanning, matching, and processing operations.
 Used by both CLI and GUI.
 """
 
+import logging
 import os
 import json
 import time
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List
 
+logger = logging.getLogger(__name__)
+
 from pef.core.models import (
     FileInfo, JsonMetadata, GeoData, Person,
-    ProcessingStats, ProgressCallback
+    ProcessingStats, ProgressCallback, DryRunResult, ProcessResult
 )
 from pef.core.utils import exists, checkout_dir
 from pef.core.scanner import FileScanner
@@ -21,35 +23,6 @@ from pef.core.matcher import FileMatcher, DEFAULT_SUFFIXES
 from pef.core.processor import FileProcessor
 from pef.core.logger import BufferedLogger, SummaryLogger
 from pef.core.exiftool import is_exiftool_available
-
-
-@dataclass
-class DryRunResult:
-    """Results from a dry-run analysis."""
-    json_count: int = 0
-    file_count: int = 0
-    matched_count: int = 0
-    unmatched_json_count: int = 0
-    unmatched_file_count: int = 0
-    with_gps: int = 0
-    with_people: int = 0
-    exiftool_available: bool = False
-    exiftool_path: Optional[str] = None
-    errors: List[str] = field(default_factory=list)
-
-
-@dataclass
-class ProcessResult:
-    """Results from a processing run."""
-    stats: ProcessingStats
-    output_dir: str
-    processed_dir: str
-    unprocessed_dir: str
-    log_file: str
-    elapsed_time: float
-    start_time: str
-    end_time: str
-    errors: List[str] = field(default_factory=list)
 
 
 class PEFOrchestrator:
@@ -129,6 +102,12 @@ class PEFOrchestrator:
         result.json_count = scanner.json_count
         result.file_count = scanner.file_count
 
+        # Validate Takeout structure
+        if scanner.json_count == 0:
+            result.errors.append(
+                "No JSON metadata files found. This may not be a valid Google Takeout directory."
+            )
+
         # Analyze matches
         matcher = FileMatcher(scanner.file_index, self.suffixes)
 
@@ -153,7 +132,8 @@ class PEFOrchestrator:
                 else:
                     result.unmatched_json_count += 1
 
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Error processing JSON {json_path}: {e}")
                 result.unmatched_json_count += 1
 
         result.unmatched_file_count = result.file_count - result.matched_count
@@ -227,7 +207,7 @@ class PEFOrchestrator:
 
                 total = len(scanner.jsons)
                 for i, json_path in enumerate(scanner.jsons):
-                    if on_progress:
+                    if on_progress and i % 100 == 0:
                         on_progress(i, total, f"Processing: {os.path.basename(json_path)}")
 
                     metadata = self._read_json(json_path)
@@ -242,6 +222,7 @@ class PEFOrchestrator:
 
                     match = matcher.find_match(json_path, metadata.title)
                     if match.found:
+                        any_success = False
                         for file_info in match.files:
                             try:
                                 dest = processor.process_file(file_info, metadata)
@@ -253,8 +234,15 @@ class PEFOrchestrator:
                                     "jsonpath": json_path,
                                     "time": time.strftime("%Y-%m-%d %H:%M:%S")
                                 })
+                                any_success = True
                             except Exception as e:
                                 result.errors.append(f"Error processing {file_info.filepath}: {e}")
+                        # Count GPS/people per JSON, not per file
+                        if any_success:
+                            if metadata.has_location():
+                                processor.stats.with_gps += 1
+                            if metadata.has_people():
+                                processor.stats.with_people += 1
                     else:
                         unprocessed_jsons.append({
                             "filename": os.path.basename(json_path),
@@ -424,5 +412,6 @@ class PEFOrchestrator:
                 people=Person.from_list(content.get("people")),
                 description=content.get("description", "")
             )
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error reading JSON {path}: {e}")
             return None

@@ -8,7 +8,8 @@
       "Bash(python pef.py:*)",
       "Bash(git stash:*)",
       "Bash(ruff:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(python -m pytest:*)"
     ]
   }
 }
