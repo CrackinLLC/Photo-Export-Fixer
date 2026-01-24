@@ -1,30 +1,3 @@
-# Task 03: Extract Utility Functions
-
-## Objective
-Extract general-purpose utility functions from `pef.py` into a dedicated module. These are pure functions with no dependencies on other pef modules.
-
-## Prerequisites
-- Task 01 (Module Structure) complete
-
-## Files to Create
-- `pef/core/utils.py`
-
-## Functions to Extract
-
-From `pef.py`:
-
-| Line | Function | Purpose |
-|------|----------|---------|
-| 95-98 | `exists(path)` | Check if path exists |
-| 100-120 | `get_unique_path(path, is_dir)` | Get unique path with (n) suffix |
-| 122-128 | `checkout_dir(path, onlynew)` | Ensure directory exists |
-| 196-197 | `get_album_name(filepath)` | Get parent folder name |
-
-## Implementation
-
-### `pef/core/utils.py`
-
-```python
 """Utility functions for file and path operations."""
 
 import os
@@ -128,61 +101,19 @@ def normalize_path(path: str) -> str:
         Normalized path.
     """
     return os.path.normpath(os.path.expanduser(path.strip()))
-```
 
-## Update `pef/core/__init__.py`
 
-```python
-"""Core library for Photo Export Fixer."""
+def truncate_filename(name: str, ext: str, max_length: int = 51) -> str:
+    """Truncate a filename to fit within max length (Google Takeout limit).
 
-from pef.core.utils import (
-    exists,
-    get_unique_path,
-    checkout_dir,
-    get_album_name,
-    normalize_path,
-)
+    Args:
+        name: Filename without extension.
+        ext: File extension (including dot).
+        max_length: Maximum total length (default 51 for Google Takeout).
 
-__all__ = [
-    "exists",
-    "get_unique_path",
-    "checkout_dir",
-    "get_album_name",
-    "normalize_path",
-]
-```
-
-## Acceptance Criteria
-
-1. [ ] `pef/core/utils.py` exists with all functions
-2. [ ] All functions have docstrings with Args/Returns
-3. [ ] Can import: `from pef.core.utils import exists, get_unique_path`
-4. [ ] Can import: `from pef.core import exists, checkout_dir`
-5. [ ] Original `pef.py` still works unchanged
-
-## Verification
-
-```python
-# Test in Python REPL
-from pef.core.utils import exists, get_unique_path, checkout_dir, get_album_name, normalize_path
-
-# Test exists
-print(exists(None))  # False
-print(exists("C:/Windows"))  # True (on Windows)
-print(exists("/nonexistent"))  # False
-
-# Test get_album_name
-print(get_album_name("/photos/Vacation/photo.jpg"))  # "Vacation"
-
-# Test normalize_path
-print(normalize_path("  ~/Photos/test/  "))  # Expanded and cleaned
-print(normalize_path("C:\\Users\\test/photos\\"))  # Normalized slashes
-```
-
-## Migration Plan
-
-After this task, the utility functions exist in both places:
-1. Original in `pef.py` (for backwards compatibility)
-2. New in `pef/core/utils.py` (for new code)
-
-In Task 10 (CLI Refactor), `pef.py` will be updated to import from `pef.core.utils` instead of defining locally.
+    Returns:
+        Truncated name if needed.
+    """
+    if len(name + ext) > max_length:
+        return name[0:max_length - len(ext)]
+    return name

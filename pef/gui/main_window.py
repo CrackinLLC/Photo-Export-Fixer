@@ -1,68 +1,9 @@
-# Task 12: Add GUI
-
-## Objective
-Create a simple graphical user interface using tkinter that provides an alternative to the command-line interface.
-
-## Prerequisites
-- Task 01-10 (All core and CLI modules) complete
-- Task 11 (Tests) recommended but not required
-
-## Files to Create
-- `pef/gui/__init__.py`
-- `pef/gui/main.py`
-- `pef/gui/main_window.py`
-- `pef/gui/progress.py`
-- `pef/gui/settings.py`
-
-## Design Principles
-
-1. **Simple and focused** - Not feature-bloated, just the essential operations
-2. **Uses core library** - All processing via `PEFOrchestrator`
-3. **Cross-platform** - tkinter works on Windows, macOS, Linux
-4. **No extra dependencies** - tkinter is built into Python
-
-## Implementation
-
-### `pef/gui/__init__.py`
-
-```python
-"""Graphical user interface for Photo Export Fixer."""
-
-from pef.gui.main import main
-
-__all__ = ["main"]
-```
-
-### `pef/gui/main.py`
-
-```python
-"""GUI entry point for Photo Export Fixer."""
-
-import sys
-
-
-def main():
-    """Launch the GUI application."""
-    from pef.gui.main_window import PEFMainWindow
-
-    app = PEFMainWindow()
-    app.run()
-
-
-if __name__ == "__main__":
-    main()
-```
-
-### `pef/gui/main_window.py`
-
-```python
 """Main window for Photo Export Fixer GUI."""
 
 import os
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from typing import Optional
 
 from pef.core.orchestrator import PEFOrchestrator
 from pef.gui.progress import ProgressDialog
@@ -155,8 +96,7 @@ class PEFMainWindow:
         process_btn = ttk.Button(
             button_frame,
             text="Process Files",
-            command=self._on_process,
-            style="Accent.TButton"
+            command=self._on_process
         )
         process_btn.pack(side=tk.LEFT, padx=5)
 
@@ -223,7 +163,7 @@ class PEFMainWindow:
                 )
 
                 result = orchestrator.dry_run(
-                    on_progress=lambda c, t, m: progress.update(c, t, m)
+                    on_progress=lambda c, t, m: self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
                 )
 
                 # Show results
@@ -236,7 +176,7 @@ class PEFMainWindow:
                 self.root.after(0, lambda: self.status_var.set("Ready"))
 
         # Run in background thread
-        thread = threading.Thread(target=run, daemon=True)
+        thread = threading.Thread(target=run, daemon=False)
         thread.start()
 
     def _show_dry_run_results(self, result):
@@ -286,7 +226,7 @@ ExifTool: {"Available" if result.exiftool_available else "Not found"}"""
                 )
 
                 result = orchestrator.process(
-                    on_progress=lambda c, t, m: progress.update(c, t, m)
+                    on_progress=lambda c, t, m: self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
                 )
 
                 # Show results
@@ -298,7 +238,7 @@ ExifTool: {"Available" if result.exiftool_available else "Not found"}"""
                 self.root.after(0, progress.close)
                 self.root.after(0, lambda: self.status_var.set("Ready"))
 
-        thread = threading.Thread(target=run, daemon=True)
+        thread = threading.Thread(target=run, daemon=False)
         thread.start()
 
     def _show_process_results(self, result):
@@ -348,7 +288,7 @@ Output saved to:
                 )
 
                 result = orchestrator.extend(
-                    on_progress=lambda c, t, m: progress.update(c, t, m)
+                    on_progress=lambda c, t, m: self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
                 )
 
                 msg = f"""Extend Complete!
@@ -370,223 +310,9 @@ Time: {result.elapsed_time} seconds"""
                 self.root.after(0, progress.close)
                 self.root.after(0, lambda: self.status_var.set("Ready"))
 
-        thread = threading.Thread(target=run, daemon=True)
+        thread = threading.Thread(target=run, daemon=False)
         thread.start()
 
     def run(self):
         """Start the application main loop."""
         self.root.mainloop()
-```
-
-### `pef/gui/progress.py`
-
-```python
-"""Progress dialog for long-running operations."""
-
-import tkinter as tk
-from tkinter import ttk
-from typing import Optional
-
-
-class ProgressDialog:
-    """Modal progress dialog with progress bar and status text."""
-
-    def __init__(self, parent: tk.Tk, title: str = "Processing"):
-        """Create progress dialog.
-
-        Args:
-            parent: Parent window.
-            title: Dialog title.
-        """
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title(title)
-        self.dialog.geometry("400x120")
-        self.dialog.resizable(False, False)
-        self.dialog.transient(parent)
-        self.dialog.grab_set()
-
-        # Center on parent
-        self.dialog.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() - 400) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - 120) // 2
-        self.dialog.geometry(f"+{x}+{y}")
-
-        # Content
-        frame = ttk.Frame(self.dialog, padding="20")
-        frame.pack(fill=tk.BOTH, expand=True)
-
-        # Status label
-        self.status_var = tk.StringVar(value="Starting...")
-        status_label = ttk.Label(frame, textvariable=self.status_var)
-        status_label.pack(fill=tk.X, pady=(0, 10))
-
-        # Progress bar
-        self.progress = ttk.Progressbar(frame, mode="determinate", length=350)
-        self.progress.pack(fill=tk.X)
-
-        # Percentage label
-        self.percent_var = tk.StringVar(value="0%")
-        percent_label = ttk.Label(frame, textvariable=self.percent_var)
-        percent_label.pack(pady=(5, 0))
-
-        # Prevent closing
-        self.dialog.protocol("WM_DELETE_WINDOW", lambda: None)
-
-    def update(self, current: int, total: int, message: str):
-        """Update progress.
-
-        Args:
-            current: Current progress value.
-            total: Total progress value.
-            message: Status message.
-        """
-        if total > 0:
-            percent = int((current / total) * 100)
-            self.progress["value"] = percent
-            self.percent_var.set(f"{percent}%")
-
-        # Truncate long messages
-        display_msg = message[:50] + "..." if len(message) > 50 else message
-        self.status_var.set(display_msg)
-
-        self.dialog.update_idletasks()
-
-    def close(self):
-        """Close the dialog."""
-        self.dialog.grab_release()
-        self.dialog.destroy()
-```
-
-### `pef/gui/settings.py`
-
-```python
-"""Settings/preferences management for GUI."""
-
-import os
-import json
-from typing import Any, Dict, Optional
-
-
-class Settings:
-    """Manages application settings persistence."""
-
-    DEFAULT_SETTINGS = {
-        "last_source_path": "",
-        "last_dest_path": "",
-        "write_exif": True,
-        "window_geometry": "600x400",
-    }
-
-    def __init__(self):
-        """Initialize settings."""
-        self._settings: Dict[str, Any] = self.DEFAULT_SETTINGS.copy()
-        self._config_path = self._get_config_path()
-        self.load()
-
-    def _get_config_path(self) -> str:
-        """Get path to config file."""
-        if os.name == "nt":  # Windows
-            base = os.environ.get("APPDATA", os.path.expanduser("~"))
-        else:  # macOS/Linux
-            base = os.path.expanduser("~/.config")
-
-        config_dir = os.path.join(base, "pef")
-        os.makedirs(config_dir, exist_ok=True)
-
-        return os.path.join(config_dir, "settings.json")
-
-    def load(self):
-        """Load settings from file."""
-        try:
-            if os.path.exists(self._config_path):
-                with open(self._config_path, "r") as f:
-                    loaded = json.load(f)
-                    self._settings.update(loaded)
-        except Exception:
-            pass  # Use defaults on error
-
-    def save(self):
-        """Save settings to file."""
-        try:
-            with open(self._config_path, "w") as f:
-                json.dump(self._settings, f, indent=2)
-        except Exception:
-            pass  # Ignore save errors
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """Get a setting value."""
-        return self._settings.get(key, default)
-
-    def set(self, key: str, value: Any):
-        """Set a setting value."""
-        self._settings[key] = value
-```
-
-### Update `pef/__main__.py`
-
-```python
-"""Entry point for python -m pef."""
-
-import sys
-
-
-def main():
-    """Main entry point supporting both CLI and GUI modes."""
-    # Check if --gui flag is present
-    if "--gui" in sys.argv:
-        sys.argv.remove("--gui")
-        from pef.gui.main import main as gui_main
-        gui_main()
-    else:
-        from pef.cli.main import main as cli_main
-        sys.exit(cli_main())
-
-
-if __name__ == "__main__":
-    main()
-```
-
-## Usage
-
-```bash
-# Launch GUI
-python -m pef --gui
-
-# Or create a shortcut script pef-gui.py:
-from pef.gui.main import main
-main()
-```
-
-## Acceptance Criteria
-
-1. [ ] All GUI files created
-2. [ ] Main window displays with all controls
-3. [ ] Source/destination browsing works
-4. [ ] Dry run shows results in dialog
-5. [ ] Processing shows progress dialog
-6. [ ] Extend mode works
-7. [ ] Threading prevents UI freezing
-8. [ ] `python -m pef --gui` launches GUI
-
-## Verification
-
-```bash
-# Launch GUI
-python -m pef --gui
-
-# Test each button:
-# 1. Browse for source directory
-# 2. Click "Dry Run" - should show analysis
-# 3. Click "Process Files" - should process with progress
-# 4. Click "Extend Metadata" - should extend if processed folder exists
-```
-
-## Future Enhancements
-
-After initial implementation, could add:
-- Settings persistence (last used paths)
-- Recent directories list
-- Drag-and-drop support
-- Dark mode support
-- Processing log viewer
-- Cancel button for long operations

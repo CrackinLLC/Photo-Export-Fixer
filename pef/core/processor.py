@@ -1,59 +1,3 @@
-# Task 08: Extract Processor
-
-## Objective
-Extract file processing operations (copy, date modification, metadata writing) into a `FileProcessor` class.
-
-## Prerequisites
-- Task 01 (Module Structure) complete
-- Task 02 (Models) complete
-- Task 03 (Utils) complete
-- Task 04 (Logger) complete
-- Task 07 (Metadata & ExifTool) complete
-
-## Files to Create
-- `pef/core/processor.py`
-
-## Current State Analysis
-
-### Copy and modify function (lines 265-289)
-```python
-def copy_modify(file, date, copyto, geo_data=None, people=None, exiftool_helper=None, saveto=None):
-    copyto = checkout_dir(os.path.join(copyto, file["albumname"]))
-    new_file = get_unique_path(os.path.join(copyto, file["filename"]))
-    shutil.copy(file["filepath"], new_file)
-    filedate.File(new_file).set(created=date, modified=date)
-    if exiftool_helper:
-        tags = {}
-        tags.update(build_gps_tags(geo_data))
-        tags.update(build_people_tags(people))
-        if tags:
-            try:
-                exiftool_helper.set_tags(new_file, tags)
-            except Exception as e:
-                if saveto:
-                    log_detail(saveto, f"Warning: Could not write metadata to {new_file}: {e}")
-    return new_file
-```
-
-### Copy unprocessed function (lines 291-302)
-```python
-def copy_unprocessed(unprocessed, saveto):
-    to_return = []
-    for file in tqdm(unprocessed, desc="Copying"):
-        log_detail(saveto, f"Copying unprocessed file: {file['filepath']}")
-        new_file = get_unique_path(os.path.join(saveto, checkout_dir(os.path.join(saveto, "Unprocessed")), file["filename"]))
-        shutil.copy(file["filepath"], new_file)
-        log_detail(saveto, f"Successfully copied unprocessed file to: {new_file}\n")
-        file["procpath"] = new_file
-        to_return.append(file)
-    return to_return
-```
-
-## Implementation
-
-### `pef/core/processor.py`
-
-```python
 """File processing operations for Photo Export Fixer.
 
 Handles copying, date modification, and metadata writing.
@@ -62,7 +6,7 @@ Handles copying, date modification, and metadata writing.
 import os
 import shutil
 from datetime import datetime
-from typing import Optional, List, Callable, Dict, Any
+from typing import Optional, List, Any
 
 import filedate
 
@@ -156,7 +100,11 @@ class FileProcessor:
         shutil.copy(file.filepath, dest_path)
 
         # Set file dates
-        filedate.File(dest_path).set(created=metadata.date, modified=metadata.date)
+        try:
+            filedate.File(dest_path).set(created=metadata.date, modified=metadata.date)
+        except Exception as e:
+            if self.logger:
+                self.logger.log(f"Warning: Could not set file dates on {dest_path}: {e}")
 
         # Write EXIF metadata
         if self._exiftool and self.write_exif:
@@ -308,7 +256,10 @@ def copy_modify(
     shutil.copy(file["filepath"], dest_path)
 
     # Set file dates
-    filedate.File(dest_path).set(created=date, modified=date)
+    try:
+        filedate.File(dest_path).set(created=date, modified=date)
+    except Exception:
+        pass  # Continue processing even if date setting fails
 
     # Write EXIF metadata
     if exiftool_helper:
@@ -319,85 +270,7 @@ def copy_modify(
         if tags:
             try:
                 exiftool_helper.set_tags(dest_path, tags)
-            except Exception as e:
+            except Exception:
                 pass  # Silently continue
 
     return dest_path
-```
-
-## Usage Examples
-
-### New style (with FileProcessor):
-```python
-from pef.core.processor import FileProcessor
-from pef.core.logger import BufferedLogger
-
-with BufferedLogger(output_dir) as logger:
-    with FileProcessor(output_dir, logger=logger) as processor:
-        for file, metadata in matched_files:
-            processor.process_file(file, metadata)
-
-        processor.process_unmatched_files(unmatched_files)
-
-        print(f"Processed: {processor.stats.processed}")
-        print(f"With GPS: {processor.stats.with_gps}")
-```
-
-### Old style (backwards compatible):
-```python
-from pef.core.processor import copy_modify
-
-new_path = copy_modify(file_dict, date, copyto, geo_data, people, exiftool_helper)
-```
-
-## Acceptance Criteria
-
-1. [ ] `pef/core/processor.py` exists with `FileProcessor` class
-2. [ ] `FileProcessor` supports context manager pattern
-3. [ ] `process_file()` copies, sets dates, writes metadata
-4. [ ] `process_unmatched_files()` accepts progress callback
-5. [ ] `extend_metadata()` writes to existing files
-6. [ ] `copy_modify()` backwards-compatible function works
-7. [ ] Stats tracking works correctly
-8. [ ] Original `pef.py` still works unchanged
-
-## Verification
-
-```python
-import tempfile
-import os
-from datetime import datetime
-from pef.core.processor import FileProcessor
-from pef.core.models import FileInfo, JsonMetadata, GeoData, Person
-from pef.core.logger import BufferedLogger
-
-# Create test file
-with tempfile.TemporaryDirectory() as tmpdir:
-    # Create source file
-    src_dir = os.path.join(tmpdir, "source", "Album1")
-    os.makedirs(src_dir)
-    src_file = os.path.join(src_dir, "test.txt")
-    with open(src_file, "w") as f:
-        f.write("test content")
-
-    # Create output dir
-    out_dir = os.path.join(tmpdir, "output")
-
-    # Process
-    file = FileInfo(filename="test.txt", filepath=src_file, albumname="Album1")
-    metadata = JsonMetadata(
-        filepath="/fake/test.json",
-        title="test.txt",
-        date=datetime(2023, 6, 15, 12, 0, 0),
-        geo_data=GeoData(40.7, -74.0),
-        people=[Person("Alice")]
-    )
-
-    with BufferedLogger(out_dir) as logger:
-        with FileProcessor(out_dir, logger=logger, write_exif=False) as processor:
-            dest = processor.process_file(file, metadata)
-            print(f"Processed to: {dest}")
-            print(f"Stats: {processor.stats}")
-            assert os.path.exists(dest)
-            assert processor.stats.processed == 1
-```

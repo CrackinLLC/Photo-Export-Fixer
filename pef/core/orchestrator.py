@@ -1,27 +1,3 @@
-# Task 09: Create Orchestrator
-
-## Objective
-Create a high-level `PEFOrchestrator` class that coordinates scanning, matching, and processing. This is the single entry point that both CLI and GUI will use.
-
-## Prerequisites
-- Task 01 (Module Structure) complete
-- Task 02-08 (All core modules) complete
-
-## Files to Create
-- `pef/core/orchestrator.py`
-
-## Design Goals
-
-1. **Single entry point** for all operations (dry-run, process, extend)
-2. **UI-agnostic** - uses callbacks for progress, not tqdm directly
-3. **Stateless operations** - each call is independent
-4. **Clean error handling** - returns results, doesn't print
-
-## Implementation
-
-### `pef/core/orchestrator.py`
-
-```python
 """High-level orchestrator for Photo Export Fixer.
 
 Coordinates scanning, matching, and processing operations.
@@ -33,7 +9,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, List, Callable
+from typing import Optional, List
 
 from pef.core.models import (
     FileInfo, JsonMetadata, GeoData, Person,
@@ -77,7 +53,7 @@ class ProcessResult:
 
 
 class PEFOrchestrator:
-    """Coordinates all Google Takeout processing operations.
+    """Coordinates all Photo Export processing operations.
 
     Usage:
         orchestrator = PEFOrchestrator(
@@ -107,7 +83,7 @@ class PEFOrchestrator:
         """Initialize orchestrator.
 
         Args:
-            source_path: Path to Google Takeout directory.
+            source_path: Path to photo export directory.
             dest_path: Output directory (default: source_path + "_pefProcessed").
             suffixes: Filename suffixes to try (default: ["", "-edited"]).
             write_exif: Whether to write EXIF metadata.
@@ -177,7 +153,7 @@ class PEFOrchestrator:
                 else:
                     result.unmatched_json_count += 1
 
-            except Exception as e:
+            except Exception:
                 result.unmatched_json_count += 1
 
         result.unmatched_file_count = result.file_count - result.matched_count
@@ -202,6 +178,21 @@ class PEFOrchestrator:
         start_time = time.time()
         start_date = time.strftime("%Y-%m-%d %H:%M:%S")
 
+        # Validate source BEFORE creating output directory
+        if not exists(self.source_path):
+            result = ProcessResult(
+                stats=ProcessingStats(),
+                output_dir=self.dest_path,
+                processed_dir="",
+                unprocessed_dir="",
+                log_file="",
+                elapsed_time=0,
+                start_time=start_date,
+                end_time=""
+            )
+            result.errors.append(f"Source path does not exist: {self.source_path}")
+            return result
+
         # Create output directory
         output_dir = checkout_dir(self.dest_path, onlynew=True)
 
@@ -215,11 +206,6 @@ class PEFOrchestrator:
             start_time=start_date,
             end_time=""
         )
-
-        # Validate source
-        if not exists(self.source_path):
-            result.errors.append(f"Source path does not exist: {self.source_path}")
-            return result
 
         # Scan
         if on_progress:
@@ -387,15 +373,19 @@ class PEFOrchestrator:
 
                 match = matcher.find_match(json_path, metadata.title)
                 if match.found:
+                    any_success = False
                     for file_info in match.files:
                         if processor.extend_metadata(file_info.filepath, metadata):
                             result.stats.processed += 1
-                            if metadata.has_location():
-                                result.stats.with_gps += 1
-                            if metadata.has_people():
-                                result.stats.with_people += 1
+                            any_success = True
                         else:
                             result.stats.errors += 1
+                    # Count GPS/people per JSON, not per file
+                    if any_success:
+                        if metadata.has_location():
+                            result.stats.with_gps += 1
+                        if metadata.has_people():
+                            result.stats.with_people += 1
                 else:
                     result.stats.skipped += 1
 
@@ -434,87 +424,5 @@ class PEFOrchestrator:
                 people=Person.from_list(content.get("people")),
                 description=content.get("description", "")
             )
-        except:
+        except Exception:
             return None
-```
-
-## Update `pef/core/__init__.py`
-
-Add to exports:
-```python
-from pef.core.orchestrator import PEFOrchestrator, DryRunResult, ProcessResult
-```
-
-## Usage Examples
-
-### From CLI:
-```python
-from pef.core.orchestrator import PEFOrchestrator
-from tqdm import tqdm
-
-def make_progress_callback(desc):
-    pbar = tqdm(desc=desc)
-    def callback(current, total, message):
-        pbar.total = total
-        pbar.n = current
-        pbar.set_description(message[:40])
-        pbar.refresh()
-    return callback, pbar
-
-orchestrator = PEFOrchestrator(source_path, dest_path)
-
-# Dry run
-callback, pbar = make_progress_callback("Analyzing")
-result = orchestrator.dry_run(on_progress=callback)
-pbar.close()
-print(f"Would process: {result.matched_count}")
-
-# Process
-callback, pbar = make_progress_callback("Processing")
-result = orchestrator.process(on_progress=callback)
-pbar.close()
-print(f"Processed: {result.stats.processed}")
-```
-
-### From GUI:
-```python
-def gui_callback(current, total, message):
-    progress_bar['value'] = (current / total) * 100
-    status_label.config(text=message)
-    root.update_idletasks()
-
-result = orchestrator.process(on_progress=gui_callback)
-```
-
-## Acceptance Criteria
-
-1. [ ] `pef/core/orchestrator.py` exists with `PEFOrchestrator` class
-2. [ ] `dry_run()` returns `DryRunResult` with all statistics
-3. [ ] `process()` returns `ProcessResult` with stats and paths
-4. [ ] `extend()` works for adding metadata to existing files
-5. [ ] All methods accept `on_progress` callback
-6. [ ] No direct printing (results returned, not printed)
-7. [ ] Original `pef.py` still works unchanged
-
-## Verification
-
-```python
-from pef.core.orchestrator import PEFOrchestrator
-
-def progress(cur, tot, msg):
-    print(f"[{cur}/{tot}] {msg}")
-
-orch = PEFOrchestrator(
-    source_path="D:/Photos/_Google Photos Backup/Google Photos",
-    write_exif=False
-)
-
-# Test dry run
-result = orch.dry_run(on_progress=progress)
-print(f"\nDry run results:")
-print(f"  JSONs: {result.json_count}")
-print(f"  Files: {result.file_count}")
-print(f"  Would match: {result.matched_count}")
-print(f"  With GPS: {result.with_gps}")
-print(f"  With people: {result.with_people}")
-```

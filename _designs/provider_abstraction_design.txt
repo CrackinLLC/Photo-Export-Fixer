@@ -1,0 +1,389 @@
+PROVIDER ABSTRACTION DESIGN
+===========================
+Status: Future Enhancement
+Source: Extracted from architecture_refactoring.md Phase 11
+
+================================================================================
+OVERVIEW
+================================================================================
+
+Goal: Abstract the photo export handling to support multiple services beyond
+Google Takeout, including Amazon Photos, iCloud, Facebook, etc.
+
+Each service exports photos differently:
+- Different JSON/metadata formats
+- Different directory structures
+- Different naming conventions
+- Different metadata fields available
+
+================================================================================
+PROPOSED STRUCTURE
+================================================================================
+
+pef/
+├── providers/
+│   ├── __init__.py
+│   ├── base.py          # Abstract base provider interface
+│   ├── google.py        # Google Takeout provider (current functionality)
+│   ├── amazon.py        # Amazon Photos provider (future)
+│   ├── apple.py         # iCloud provider (future)
+│   └── facebook.py      # Facebook export provider (future)
+
+================================================================================
+BASE PROVIDER INTERFACE
+================================================================================
+
+```python
+# pef/providers/base.py
+
+from abc import ABC, abstractmethod
+from typing import List, Optional, Iterator
+from pef.core.models import FileInfo, JsonMetadata, FileIndex
+
+
+class BaseProvider(ABC):
+    """Abstract base class for photo export providers.
+
+    Each provider handles a specific service's export format.
+    """
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Human-readable provider name (e.g., 'Google Takeout')."""
+        pass
+
+    @property
+    @abstractmethod
+    def id(self) -> str:
+        """Provider identifier (e.g., 'google', 'amazon')."""
+        pass
+
+    @abstractmethod
+    def detect(self, path: str) -> bool:
+        """Check if the given path contains this provider's export format.
+
+        Args:
+            path: Directory path to check.
+
+        Returns:
+            True if this provider can handle the directory.
+        """
+        pass
+
+    @abstractmethod
+    def scan(self, path: str) -> tuple[List[str], List[FileInfo], FileIndex]:
+        """Scan directory for metadata files and media files.
+
+        Args:
+            path: Root directory to scan.
+
+        Returns:
+            Tuple of (metadata_paths, file_infos, file_index).
+        """
+        pass
+
+    @abstractmethod
+    def parse_metadata(self, metadata_path: str) -> Optional[JsonMetadata]:
+        """Parse a metadata file into JsonMetadata.
+
+        Args:
+            metadata_path: Path to metadata file.
+
+        Returns:
+            JsonMetadata object, or None if invalid.
+        """
+        pass
+
+    @abstractmethod
+    def match_file(self, metadata: JsonMetadata, file_index: FileIndex) -> List[FileInfo]:
+        """Find media file(s) matching the given metadata.
+
+        Args:
+            metadata: Parsed metadata.
+            file_index: Index of available files.
+
+        Returns:
+            List of matching FileInfo objects (may be empty).
+        """
+        pass
+
+    def get_suffixes(self) -> List[str]:
+        """Get filename suffixes to try when matching.
+
+        Default: ["", "-edited"]
+        Override in subclasses for service-specific suffixes.
+        """
+        return ["", "-edited"]
+```
+
+================================================================================
+GOOGLE PROVIDER (EXTRACT FROM CURRENT CODE)
+================================================================================
+
+```python
+# pef/providers/google.py
+
+from pef.providers.base import BaseProvider
+from pef.core.scanner import FileScanner
+from pef.core.matcher import FileMatcher
+from pef.core.models import JsonMetadata, GeoData, Person
+
+class GoogleTakeoutProvider(BaseProvider):
+    """Provider for Google Takeout exports."""
+
+    @property
+    def name(self) -> str:
+        return "Google Takeout"
+
+    @property
+    def id(self) -> str:
+        return "google"
+
+    def detect(self, path: str) -> bool:
+        """Detect Google Takeout by looking for characteristic structure.
+
+        Google Takeout typically has:
+        - Folders like "Google Photos" or year-based folders
+        - .json files alongside media files
+        - JSON files with "photoTakenTime" field
+        """
+        # Check for Google Photos folder
+        # Check for .json files with expected structure
+        # Return True if matches Google Takeout pattern
+        pass
+
+    def scan(self, path: str):
+        """Use existing FileScanner."""
+        scanner = FileScanner(path)
+        scanner.scan()
+        return scanner.jsons, scanner.files, scanner.file_index
+
+    def parse_metadata(self, metadata_path: str) -> Optional[JsonMetadata]:
+        """Parse Google's JSON format.
+
+        Expected fields:
+        - title: Original filename
+        - photoTakenTime.timestamp: Unix timestamp
+        - geoData: {latitude, longitude, altitude}
+        - people: [{name: "..."}]
+        - description: Caption text
+        """
+        # Current _read_json logic from orchestrator.py
+        pass
+
+    def match_file(self, metadata, file_index):
+        """Use existing FileMatcher with Google's quirks.
+
+        Handles:
+        - 51-character filename truncation
+        - Bracket suffixes for duplicates: photo(1).jpg
+        - -edited suffix variations
+        """
+        matcher = FileMatcher(file_index, self.get_suffixes())
+        result = matcher.find_match(metadata.filepath, metadata.title)
+        return result.files if result.found else []
+```
+
+================================================================================
+AMAZON PHOTOS PROVIDER (FUTURE)
+================================================================================
+
+```python
+# pef/providers/amazon.py
+
+class AmazonPhotosProvider(BaseProvider):
+    """Provider for Amazon Photos exports.
+
+    Amazon Photos export format (to be researched):
+    - May use different metadata format
+    - May have different directory structure
+    - May include different metadata fields
+    """
+
+    @property
+    def name(self) -> str:
+        return "Amazon Photos"
+
+    @property
+    def id(self) -> str:
+        return "amazon"
+
+    def detect(self, path: str) -> bool:
+        # TODO: Research Amazon Photos export format
+        pass
+
+    # ... implement other methods based on Amazon's format
+```
+
+================================================================================
+ICLOUD PROVIDER (FUTURE)
+================================================================================
+
+```python
+# pef/providers/apple.py
+
+class ICloudProvider(BaseProvider):
+    """Provider for iCloud/Apple Photos exports.
+
+    Apple Photos export considerations:
+    - May export as .photoslibrary package
+    - May use plist or other Apple formats
+    - May embed metadata in files differently
+    """
+
+    @property
+    def name(self) -> str:
+        return "iCloud Photos"
+
+    @property
+    def id(self) -> str:
+        return "apple"
+
+    # ... implement based on Apple's format
+```
+
+================================================================================
+PROVIDER REGISTRY
+================================================================================
+
+```python
+# pef/providers/__init__.py
+
+from typing import List, Optional
+from pef.providers.base import BaseProvider
+from pef.providers.google import GoogleTakeoutProvider
+
+# Registry of all available providers
+_PROVIDERS: List[BaseProvider] = [
+    GoogleTakeoutProvider(),
+    # AmazonPhotosProvider(),  # Future
+    # ICloudProvider(),        # Future
+]
+
+def get_providers() -> List[BaseProvider]:
+    """Get all registered providers."""
+    return _PROVIDERS.copy()
+
+def detect_provider(path: str) -> Optional[BaseProvider]:
+    """Auto-detect which provider can handle the given path.
+
+    Args:
+        path: Directory to check.
+
+    Returns:
+        Matching provider, or None if no provider matches.
+    """
+    for provider in _PROVIDERS:
+        if provider.detect(path):
+            return provider
+    return None
+
+def get_provider(provider_id: str) -> Optional[BaseProvider]:
+    """Get a specific provider by ID.
+
+    Args:
+        provider_id: Provider identifier (e.g., 'google').
+
+    Returns:
+        Provider instance, or None if not found.
+    """
+    for provider in _PROVIDERS:
+        if provider.id == provider_id:
+            return provider
+    return None
+```
+
+================================================================================
+ORCHESTRATOR INTEGRATION
+================================================================================
+
+Update PEFOrchestrator to use providers:
+
+```python
+class PEFOrchestrator:
+    def __init__(
+        self,
+        source_path: str,
+        dest_path: Optional[str] = None,
+        provider: Optional[str] = None,  # NEW: explicit provider selection
+        ...
+    ):
+        self.source_path = source_path
+        self.dest_path = dest_path or f"{source_path}_pefProcessed"
+
+        # Auto-detect or use specified provider
+        if provider:
+            self._provider = get_provider(provider)
+            if not self._provider:
+                raise ValueError(f"Unknown provider: {provider}")
+        else:
+            self._provider = detect_provider(source_path)
+            if not self._provider:
+                raise ValueError("Could not detect export format")
+
+    def process(self, on_progress=None):
+        # Use provider methods instead of hardcoded Google logic
+        jsons, files, index = self._provider.scan(self.source_path)
+
+        for json_path in jsons:
+            metadata = self._provider.parse_metadata(json_path)
+            if metadata:
+                matches = self._provider.match_file(metadata, index)
+                # ... process matches
+```
+
+================================================================================
+CLI INTEGRATION
+================================================================================
+
+Add --provider flag:
+
+```
+python -m pef --path /photos --provider google
+python -m pef --path /photos --provider amazon
+python -m pef --path /photos  # Auto-detect
+```
+
+================================================================================
+IMPLEMENTATION STEPS
+================================================================================
+
+1. Create providers/ directory structure
+2. Create base.py with abstract BaseProvider class
+3. Extract current Google-specific logic into google.py
+4. Update orchestrator to use provider interface
+5. Add --provider CLI flag with auto-detect default
+6. Add provider selection to GUI
+7. Research and implement Amazon provider
+8. Research and implement iCloud provider
+
+================================================================================
+RESEARCH NEEDED
+================================================================================
+
+Before implementing additional providers:
+
+1. Amazon Photos
+   - How to export from Amazon Photos
+   - What format are metadata files (JSON, XML, other?)
+   - Directory structure conventions
+   - Available metadata fields
+
+2. iCloud/Apple Photos
+   - Export options from Photos app
+   - .photoslibrary package structure
+   - Metadata storage format (plist, SQLite?)
+   - HEIC/HEIF handling considerations
+
+3. Facebook
+   - Data export format
+   - Metadata structure
+   - Album organization
+
+4. Instagram
+   - Data download format
+   - JSON structure
+   - Stories vs posts organization
+
+================================================================================

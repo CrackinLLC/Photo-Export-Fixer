@@ -1,58 +1,8 @@
-# Task 04: Extract Logger
-
-## Objective
-Replace the global `_log_handle` and `_log_path` variables with a proper `BufferedLogger` class that supports context manager pattern.
-
-## Prerequisites
-- Task 01 (Module Structure) complete
-
-## Files to Create
-- `pef/core/logger.py`
-
-## Current State Analysis
-
-Lines 304-329 in `pef.py`:
-```python
-# Module-level log handle for buffered logging
-_log_handle = None
-_log_path = None
-
-def init_logger(saveto):
-    global _log_handle, _log_path
-    _log_path = os.path.join(saveto, "detailed_logs.txt")
-    _log_handle = open(_log_path, "a", encoding="utf-8")
-
-def close_logger():
-    global _log_handle
-    if _log_handle:
-        _log_handle.close()
-        _log_handle = None
-
-def log_detail(saveto, message):
-    global _log_handle
-    if _log_handle:
-        _log_handle.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
-    else:
-        # Fallback to original behavior if logger not initialized
-        with open(os.path.join(saveto, "detailed_logs.txt"), "a", encoding="utf-8") as logfile:
-            logfile.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
-```
-
-### Problems
-1. Global state (`_log_handle`, `_log_path`)
-2. Must remember to call `close_logger()`
-3. `saveto` parameter in `log_detail` is confusing when logger is initialized
-
-## Implementation
-
-### `pef/core/logger.py`
-
-```python
 """Logging utilities for Photo Export Fixer."""
 
 import os
 import time
-from typing import Optional, TextIO
+from typing import Optional, TextIO, List, Dict, Any
 
 
 class BufferedLogger:
@@ -143,9 +93,9 @@ class SummaryLogger:
 
     def write_summary(
         self,
-        processed: list,
-        unprocessed: list,
-        unprocessed_jsons: list,
+        processed: List[Dict[str, Any]],
+        unprocessed: List[Dict[str, Any]],
+        unprocessed_jsons: List[Dict[str, Any]],
         elapsed_time: float,
         start_time: str,
         end_time: str
@@ -197,93 +147,42 @@ class SummaryLogger:
             f.write(f"Ended:   {end_time}\n")
 
 
-# Convenience function for simple logging (backwards compatibility)
-def create_logger(output_dir: str) -> BufferedLogger:
-    """Create a BufferedLogger instance.
+class NullLogger:
+    """A logger that does nothing - useful for testing or when logging is disabled."""
+
+    def log(self, message: str) -> None:
+        """No-op log method."""
+        pass
+
+    def flush(self) -> None:
+        """No-op flush method."""
+        pass
+
+    def close(self) -> None:
+        """No-op close method."""
+        pass
+
+    def __enter__(self) -> "NullLogger":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        pass
+
+    @property
+    def is_open(self) -> bool:
+        return True
+
+
+def create_logger(output_dir: str, enabled: bool = True) -> BufferedLogger:
+    """Create a logger instance.
 
     Args:
         output_dir: Directory for log file.
+        enabled: If False, returns a NullLogger that does nothing.
 
     Returns:
-        Configured BufferedLogger instance.
+        Configured logger instance.
     """
-    return BufferedLogger(output_dir)
-```
-
-## Usage Example
-
-### New style (with context manager):
-```python
-from pef.core.logger import BufferedLogger, SummaryLogger
-
-# Detailed logging
-with BufferedLogger(output_dir) as logger:
-    logger.log("Processing started")
-    for file in files:
-        logger.log(f"Processing: {file}")
-    logger.log("Processing complete")
-
-# Summary logging
-summary = SummaryLogger(output_dir)
-summary.write_summary(processed, unprocessed, unprocessed_jsons, elapsed, start, end)
-```
-
-### Old style (manual management):
-```python
-logger = BufferedLogger(output_dir)
-try:
-    logger.log("Processing...")
-finally:
-    logger.close()
-```
-
-## Acceptance Criteria
-
-1. [ ] `pef/core/logger.py` exists with `BufferedLogger` and `SummaryLogger` classes
-2. [ ] `BufferedLogger` supports context manager (`with` statement)
-3. [ ] `BufferedLogger.log()` writes timestamped messages
-4. [ ] `SummaryLogger.write_summary()` produces same format as current `savelogs()`
-5. [ ] Original `pef.py` still works unchanged
-
-## Verification
-
-```python
-import os
-import tempfile
-from pef.core.logger import BufferedLogger, SummaryLogger
-
-# Test BufferedLogger
-with tempfile.TemporaryDirectory() as tmpdir:
-    with BufferedLogger(tmpdir) as logger:
-        logger.log("Test message 1")
-        logger.log("Test message 2")
-
-    # Verify file contents
-    with open(os.path.join(tmpdir, "detailed_logs.txt")) as f:
-        content = f.read()
-        print(content)
-        assert "Test message 1" in content
-        assert "Test message 2" in content
-
-# Test SummaryLogger
-with tempfile.TemporaryDirectory() as tmpdir:
-    summary = SummaryLogger(tmpdir)
-    summary.write_summary(
-        processed=[{"filename": "test.jpg", "filepath": "/a", "procpath": "/b", "jsonpath": "/c", "time": "now"}],
-        unprocessed=[],
-        unprocessed_jsons=[],
-        elapsed_time=10.5,
-        start_time="2024-01-01 10:00:00",
-        end_time="2024-01-01 10:00:10"
-    )
-    with open(os.path.join(tmpdir, "logs.txt")) as f:
-        print(f.read())
-```
-
-## Migration Notes
-
-The current global state pattern will be replaced in Task 10 (CLI Refactor):
-- `init_logger(saveto)` -> `logger = BufferedLogger(saveto)`
-- `log_detail(saveto, msg)` -> `logger.log(msg)`
-- `close_logger()` -> `logger.close()` (or use `with` statement)
-- `savelogs(...)` -> `SummaryLogger(saveto).write_summary(...)`
+    if enabled:
+        return BufferedLogger(output_dir)
+    return NullLogger()

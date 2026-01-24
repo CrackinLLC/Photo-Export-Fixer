@@ -1,29 +1,3 @@
-# Task 10: Refactor CLI
-
-## Objective
-Refactor the command-line interface to use the new core library, with proper separation between argument parsing and execution.
-
-## Prerequisites
-- Task 01-09 (All core modules and orchestrator) complete
-
-## Files to Create/Modify
-- `pef/cli/__init__.py`
-- `pef/cli/main.py`
-- `pef/cli/wizard.py`
-- `pef.py` (update to thin wrapper)
-
-## Current State Analysis
-
-Lines 817-877 in `pef.py`:
-- `wizard()` - Interactive input mode
-- `parse()` - Argument parsing and dispatch
-- Main execution block
-
-## Implementation
-
-### `pef/cli/main.py`
-
-```python
 """Command-line interface for Photo Export Fixer."""
 
 import argparse
@@ -51,7 +25,7 @@ Processed files are copied and modified based on their metadata, while unprocess
 ones are logged.
 
 More details can be found in the README file.
-Git repository: https://github.com/mshablovskyy/pef.git
+Git repository: https://github.com/CrackinLLC/Photo-Export-Fixer
 """
 
 # Default suffixes
@@ -358,94 +332,3 @@ def main(args: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-```
-
-### `pef/cli/wizard.py`
-
-```python
-"""Interactive wizard mode for Photo Export Fixer."""
-
-from typing import Optional
-
-
-def run_wizard() -> Optional[str]:
-    """Run interactive wizard to get path from user.
-
-    Returns:
-        Path entered by user, or None if cancelled.
-    """
-    print("\nYou have not given arguments needed, so you have been redirected to the Wizard setup")
-
-    try:
-        path = input("Enter path to your folder with takeouts: ")
-        return path.strip() if path else None
-    except (KeyboardInterrupt, EOFError):
-        print("\nCancelled.")
-        return None
-```
-
-### `pef/cli/__init__.py`
-
-```python
-"""Command-line interface for Photo Export Fixer."""
-
-from pef.cli.main import main
-
-__all__ = ["main"]
-```
-
-### Update root `pef.py`
-
-Replace entire file with:
-
-```python
-#!/usr/bin/env python3
-"""Photo Export Fixer - backwards compatible entry point.
-
-For new usage, prefer: python -m pef
-"""
-
-import sys
-from pef.cli.main import main
-
-if __name__ == "__main__":
-    sys.exit(main())
-```
-
-## Acceptance Criteria
-
-1. [ ] `pef/cli/main.py` exists with all functions
-2. [ ] `pef/cli/wizard.py` exists with wizard function
-3. [ ] CLI uses `PEFOrchestrator` for all operations
-4. [ ] Progress bars work with tqdm
-5. [ ] All existing CLI arguments work the same
-6. [ ] `python -m pef --help` works
-7. [ ] `python pef.py --dry-run --path <test>` works
-8. [ ] Exit codes are returned properly (0 = success)
-
-## Verification
-
-```bash
-# Test help
-python -m pef --help
-
-# Test dry run
-python -m pef --dry-run --path "D:\Photos\_Google Photos Backup\Google Photos"
-
-# Test extend dry run
-python -m pef --extend --dry-run --path "D:\Photos\_Google Photos Backup\Google Photos"
-
-# Test backwards compatibility
-python pef.py --dry-run --path "D:\Photos\_Google Photos Backup\Google Photos"
-
-# Test wizard mode (no args)
-python -m pef
-```
-
-## Migration Notes
-
-After this task:
-1. Root `pef.py` becomes a thin wrapper
-2. All logic lives in `pef/cli/main.py`
-3. Core processing uses `PEFOrchestrator`
-4. CLI is completely decoupled from core library

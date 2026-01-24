@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(python gtp.py:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(git mv:*)",
+      "Bash(python pef.py:*)",
+      "Bash(git stash:*)",
+      "Bash(ruff:*)",
+      "Bash(tree:*)"
+    ]
+  }
+}

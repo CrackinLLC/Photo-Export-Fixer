@@ -1,0 +1,254 @@
+"""ExifTool management for Photo Export Fixer.
+
+Handles finding, downloading, and initializing ExifTool.
+"""
+
+import os
+import shutil
+import sys
+from typing import Optional
+
+# ExifTool paths
+EXIFTOOL_DIR = "tools/exiftool"
+EXIFTOOL_EXE = "exiftool.exe"
+
+
+def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
+    """Find ExifTool executable.
+
+    Checks in order:
+    1. System PATH
+    2. Local tools directory
+    3. Attempts auto-download (Windows only)
+
+    Args:
+        base_dir: Base directory for local tools folder.
+                 Defaults to directory containing this module.
+
+    Returns:
+        Path to exiftool executable, or None if not found.
+    """
+    # 1. Check system PATH
+    if shutil.which("exiftool"):
+        return "exiftool"
+
+    # 2. Check local tools folder
+    if base_dir is None:
+        # Go up from pef/core/ to project root
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+    local_path = os.path.join(base_dir, EXIFTOOL_DIR, EXIFTOOL_EXE)
+    if os.path.exists(local_path):
+        return local_path
+
+    # 3. Attempt auto-download (Windows only)
+    if sys.platform == "win32":
+        if auto_download_exiftool(base_dir):
+            return local_path
+
+    # Not found
+    print_install_instructions()
+    return None
+
+
+def auto_download_exiftool(base_dir: str) -> bool:
+    """Download ExifTool for Windows.
+
+    Fetches the latest version dynamically from exiftool.org.
+
+    Args:
+        base_dir: Base directory to install into.
+
+    Returns:
+        True if download succeeded, False otherwise.
+    """
+    import urllib.request
+    import zipfile
+
+    tools_dir = os.path.join(base_dir, EXIFTOOL_DIR)
+    os.makedirs(tools_dir, exist_ok=True)
+
+    zip_path = os.path.join(tools_dir, "exiftool.zip")
+
+    try:
+        # Get latest version number from exiftool.org
+        print("Checking for latest ExifTool version...")
+        with urllib.request.urlopen("https://exiftool.org/ver.txt") as response:
+            version = response.read().decode().strip()
+        print(f"Latest version: {version}")
+
+        # Download from SourceForge (64-bit Windows)
+        url = f"https://sourceforge.net/projects/exiftool/files/exiftool-{version}_64.zip/download"
+        print(f"Downloading ExifTool {version}...")
+        urllib.request.urlretrieve(url, zip_path)
+
+        print("Extracting...")
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(tools_dir)
+
+        # Find the extracted subdirectory and move contents to tools_dir
+        for item in os.listdir(tools_dir):
+            item_path = os.path.join(tools_dir, item)
+            if os.path.isdir(item_path) and item.startswith("exiftool"):
+                # This is the extracted folder - move its contents up
+                for sub_item in os.listdir(item_path):
+                    src = os.path.join(item_path, sub_item)
+                    dst = os.path.join(tools_dir, sub_item)
+                    if sub_item.startswith("exiftool") and sub_item.endswith(".exe"):
+                        # Rename the exe to exiftool.exe
+                        dst = os.path.join(tools_dir, EXIFTOOL_EXE)
+                    shutil.move(src, dst)
+                # Remove the now-empty subdirectory
+                os.rmdir(item_path)
+                break
+
+        os.remove(zip_path)
+        print("ExifTool installed successfully!")
+        return True
+
+    except Exception as e:
+        print(f"Auto-download failed: {e}")
+        return False
+
+
+def print_install_instructions() -> None:
+    """Print manual installation instructions."""
+    print("ExifTool not found. Please install it:")
+    print("  1. Download from https://exiftool.org/")
+    print("  2. Extract and rename exiftool(-k).exe to exiftool.exe")
+    print("  3. Place in PATH or in ./tools/exiftool/")
+
+
+def is_exiftool_available() -> bool:
+    """Check if ExifTool is available.
+
+    Returns:
+        True if ExifTool can be found.
+    """
+    # Check PATH first (quick)
+    if shutil.which("exiftool"):
+        return True
+
+    # Check local tools folder
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    local_path = os.path.join(base_dir, EXIFTOOL_DIR, EXIFTOOL_EXE)
+    return os.path.exists(local_path)
+
+
+class ExifToolManager:
+    """Manages ExifTool lifecycle for batch operations.
+
+    Usage:
+        with ExifToolManager() as et:
+            et.write_tags("/path/to/file.jpg", {"GPSLatitude": 40.7})
+
+    Or for processing many files:
+        manager = ExifToolManager()
+        manager.start()
+        for file in files:
+            manager.write_tags(file, tags)
+        manager.stop()
+    """
+
+    def __init__(self, base_dir: Optional[str] = None):
+        """Initialize manager.
+
+        Args:
+            base_dir: Base directory for local tools folder.
+        """
+        self._helper = None
+        self._exiftool_path = None
+        self._base_dir = base_dir
+
+    def start(self) -> bool:
+        """Start ExifTool process.
+
+        Returns:
+            True if started successfully, False otherwise.
+        """
+        try:
+            import exiftool
+        except ImportError:
+            print("pyexiftool not installed. Run: pip install pyexiftool")
+            return False
+
+        self._exiftool_path = get_exiftool_path(self._base_dir)
+        if not self._exiftool_path:
+            return False
+
+        try:
+            self._helper = exiftool.ExifToolHelper(executable=self._exiftool_path)
+            self._helper.run()
+            return True
+        except Exception as e:
+            print(f"Failed to start ExifTool: {e}")
+            return False
+
+    def stop(self) -> None:
+        """Stop ExifTool process."""
+        if self._helper:
+            try:
+                self._helper.terminate()
+            except Exception:
+                pass
+            self._helper = None
+
+    def write_tags(self, filepath: str, tags: dict) -> bool:
+        """Write tags to a file.
+
+        Args:
+            filepath: Path to file.
+            tags: Dict of ExifTool tags.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        if not self._helper or not tags:
+            return False
+
+        try:
+            self._helper.set_tags(filepath, tags)
+            return True
+        except Exception:
+            return False
+
+    def read_tags(self, filepath: str, tags: Optional[list] = None) -> dict:
+        """Read tags from a file.
+
+        Args:
+            filepath: Path to file.
+            tags: Optional list of specific tags to read.
+
+        Returns:
+            Dict of tag values, empty if error.
+        """
+        if not self._helper:
+            return {}
+
+        try:
+            if tags:
+                result = self._helper.get_tags(filepath, tags)
+            else:
+                result = self._helper.get_metadata(filepath)
+            return result[0] if result else {}
+        except Exception:
+            return {}
+
+    @property
+    def is_running(self) -> bool:
+        """Check if ExifTool is running."""
+        return self._helper is not None
+
+    @property
+    def exiftool_path(self) -> Optional[str]:
+        """Get the path to ExifTool executable."""
+        return self._exiftool_path
+
+    def __enter__(self) -> "ExifToolManager":
+        """Context manager entry."""
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit."""
+        self.stop()
