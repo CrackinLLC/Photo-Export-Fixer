@@ -217,3 +217,103 @@ class TestFileProcessorStats:
                     processor.process_file(f, metadata)
 
                 assert processor.stats.processed == 3
+
+
+class TestProcessUnmatchedFiles:
+    """Tests for process_unmatched_files() batch method."""
+
+    @pytest.fixture
+    def source_files(self, temp_dir):
+        """Create multiple source files for testing."""
+        album = os.path.join(temp_dir, "source", "Album")
+        os.makedirs(album)
+
+        files = []
+        for i in range(3):
+            filepath = os.path.join(album, f"photo{i}.jpg")
+            with open(filepath, "wb") as f:
+                f.write(f"data{i}".encode())
+            files.append(FileInfo(f"photo{i}.jpg", filepath, "Album"))
+
+        return files
+
+    def test_copies_all_files(self, temp_dir, source_files):
+        """Verify all unmatched files are copied."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with FileProcessor(output_dir, write_exif=False) as processor:
+            result = processor.process_unmatched_files(source_files)
+
+        assert len(result) == 3
+        for f in result:
+            assert f.procpath is not None
+            assert os.path.exists(f.procpath)
+
+    def test_updates_stats(self, temp_dir, source_files):
+        """Verify stats are updated for each file."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with FileProcessor(output_dir, write_exif=False) as processor:
+            processor.process_unmatched_files(source_files)
+
+            assert processor.stats.unmatched_files == 3
+
+    def test_progress_callback_called(self, temp_dir, source_files):
+        """Verify progress callback is called."""
+        output_dir = os.path.join(temp_dir, "output")
+        calls = []
+
+        def callback(current, total, message):
+            calls.append((current, total, message))
+
+        with FileProcessor(output_dir, write_exif=False) as processor:
+            processor.process_unmatched_files(source_files, on_progress=callback)
+
+        assert len(calls) == 3
+        assert calls[-1][0] == 3  # Final current == total
+
+    def test_files_go_to_unprocessed_folder(self, temp_dir, source_files):
+        """Verify files are copied to Unprocessed folder."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with FileProcessor(output_dir, write_exif=False) as processor:
+            result = processor.process_unmatched_files(source_files)
+
+        for f in result:
+            assert "Unprocessed" in f.procpath
+
+
+class TestFileProcessorErrorHandling:
+    """Tests for error handling in FileProcessor."""
+
+    def test_exiftool_write_failure_increments_errors(self, temp_dir):
+        """Verify ExifTool write failure increments error count."""
+        # Create source file
+        album = os.path.join(temp_dir, "source", "Album")
+        os.makedirs(album)
+        filepath = os.path.join(album, "photo.jpg")
+        with open(filepath, "wb") as f:
+            f.write(b"fake jpg")
+
+        file_info = FileInfo("photo.jpg", filepath, "Album")
+        metadata = JsonMetadata(
+            filepath="/test.json",
+            title="photo.jpg",
+            date=datetime.now(),
+            geo_data=GeoData(40.7, -74.0)  # Has GPS data to trigger write
+        )
+
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager') as MockET:
+                mock_et = MagicMock()
+                mock_et.start.return_value = True
+                mock_et.write_tags.side_effect = Exception("ExifTool error")
+                MockET.return_value = mock_et
+
+                with FileProcessor(output_dir, write_exif=True) as processor:
+                    processor.process_file(file_info, metadata)
+
+                    assert processor.stats.errors == 1
+                    assert processor.stats.processed == 1  # File still processed

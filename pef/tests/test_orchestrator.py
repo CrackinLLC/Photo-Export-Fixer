@@ -356,3 +356,97 @@ class TestPEFOrchestratorIntegration:
         assert result.elapsed_time >= 0
         assert result.start_time is not None
         assert result.end_time is not None
+
+
+class TestPEFOrchestratorErrorHandling:
+    """Tests for error handling in PEFOrchestrator."""
+
+    def test_dry_run_handles_invalid_json(self, temp_dir):
+        """Verify dry_run handles corrupt JSON files gracefully."""
+        album = os.path.join(temp_dir, "Album1")
+        os.makedirs(album)
+
+        # Create corrupt JSON
+        corrupt_json = os.path.join(album, "corrupt.json")
+        with open(corrupt_json, "w") as f:
+            f.write("not valid json {{{")
+
+        # Create valid JSON and file
+        with open(os.path.join(album, "photo.jpg"), "wb") as f:
+            f.write(b"data")
+        with open(os.path.join(album, "photo.jpg.json"), "w") as f:
+            json.dump({
+                "title": "photo.jpg",
+                "photoTakenTime": {"timestamp": "1609459200"}
+            }, f)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        result = orchestrator.dry_run()
+
+        # Should still count valid JSON
+        assert result.json_count == 2  # Both JSONs found
+        assert result.unmatched_json_count >= 1  # Corrupt one unmatched
+
+    def test_process_continues_after_file_error(self, temp_dir):
+        """Verify processing continues after a file fails."""
+        album = os.path.join(temp_dir, "Album1")
+        os.makedirs(album)
+
+        # Create two valid files with JSONs
+        for i in range(2):
+            with open(os.path.join(album, f"photo{i}.jpg"), "wb") as f:
+                f.write(b"data")
+            with open(os.path.join(album, f"photo{i}.jpg.json"), "w") as f:
+                json.dump({
+                    "title": f"photo{i}.jpg",
+                    "photoTakenTime": {"timestamp": "1609459200"}
+                }, f)
+
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                orchestrator = PEFOrchestrator(
+                    temp_dir,
+                    dest_path=output_dir,
+                    write_exif=False
+                )
+                result = orchestrator.process()
+
+        # Both files should be processed
+        assert result.stats.processed == 2
+
+    def test_process_accumulates_errors(self, temp_dir):
+        """Verify errors are accumulated in result."""
+        album = os.path.join(temp_dir, "Album1")
+        os.makedirs(album)
+
+        # Create file with JSON
+        with open(os.path.join(album, "photo.jpg"), "wb") as f:
+            f.write(b"data")
+        with open(os.path.join(album, "photo.jpg.json"), "w") as f:
+            json.dump({
+                "title": "photo.jpg",
+                "photoTakenTime": {"timestamp": "1609459200"}
+            }, f)
+
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                # Patch process_file to raise an error
+                with patch.object(
+                    __import__('pef.core.processor', fromlist=['FileProcessor']).FileProcessor,
+                    'process_file',
+                    side_effect=PermissionError("Access denied")
+                ):
+                    orchestrator = PEFOrchestrator(
+                        temp_dir,
+                        dest_path=output_dir,
+                        write_exif=False
+                    )
+                    result = orchestrator.process()
+
+        # Error should be recorded
+        assert len(result.errors) >= 1
+        assert "Access denied" in str(result.errors[0]) or "Error" in str(result.errors[0])

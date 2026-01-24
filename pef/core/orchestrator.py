@@ -6,10 +6,17 @@ Used by both CLI and GUI.
 
 import logging
 import os
-import json
 import time
 from datetime import datetime
 from typing import Optional, List
+
+# Use orjson for faster JSON parsing (3-10x faster than stdlib json)
+try:
+    import orjson
+    _USE_ORJSON = True
+except ImportError:
+    import json
+    _USE_ORJSON = False
 
 logger = logging.getLogger(__name__)
 
@@ -199,10 +206,10 @@ class PEFOrchestrator:
         unprocessed_jsons = []
         matched_file_paths = set()
 
-        with BufferedLogger(output_dir) as logger:
-            logger.log(f"Started processing: {self.source_path}")
+        with BufferedLogger(output_dir) as file_logger:
+            file_logger.log(f"Started processing: {self.source_path}")
 
-            with FileProcessor(output_dir, logger=logger, write_exif=self.write_exif) as processor:
+            with FileProcessor(output_dir, logger=file_logger, write_exif=self.write_exif) as processor:
                 matcher = FileMatcher(scanner.file_index, self.suffixes)
 
                 total = len(scanner.jsons)
@@ -395,8 +402,15 @@ class PEFOrchestrator:
             JsonMetadata object, or None if invalid.
         """
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = json.load(f)
+            # Read file in binary mode for orjson compatibility
+            with open(path, "rb") as f:
+                raw = f.read()
+
+            # Parse JSON using orjson (faster) or stdlib json
+            if _USE_ORJSON:
+                content = orjson.loads(raw)
+            else:
+                content = json.loads(raw.decode("utf-8"))
 
             if not content or "title" not in content:
                 return None

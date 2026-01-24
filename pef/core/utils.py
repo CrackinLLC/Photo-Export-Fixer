@@ -1,6 +1,7 @@
 """Utility functions for file and path operations."""
 
 import os
+from functools import lru_cache
 from typing import Optional
 
 
@@ -60,7 +61,14 @@ def checkout_dir(path: str, onlynew: bool = False) -> str:
 
     Returns:
         Path to the directory (may have (n) suffix if onlynew=True).
+
+    Raises:
+        ValueError: If path exists as a file (not a directory).
     """
+    # Check if path exists as a file (not directory)
+    if os.path.isfile(path):
+        raise ValueError(f"Cannot create directory: {path} exists as a file")
+
     if not os.path.isdir(path) and not onlynew:
         os.makedirs(path)
     elif onlynew:
@@ -69,8 +77,11 @@ def checkout_dir(path: str, onlynew: bool = False) -> str:
     return path
 
 
+@lru_cache(maxsize=10000)
 def get_album_name(filepath: str) -> str:
     """Get the name of the parent folder (album name).
+
+    Results are cached for performance when called repeatedly with same paths.
 
     Args:
         filepath: Full path to a file.

@@ -85,6 +85,57 @@ class TestFileScanner:
         assert scanner.json_count == 0
         assert scanner.file_count == 0
 
+    def test_rescan_clears_previous_results(self, sample_takeout):
+        """Verify scanning again doesn't accumulate results."""
+        scanner = FileScanner(sample_takeout)
+
+        # First scan
+        scanner.scan()
+        first_json_count = scanner.json_count
+        first_file_count = scanner.file_count
+
+        # Second scan - results should be same, not doubled
+        scanner.scan()
+
+        assert scanner.json_count == first_json_count
+        assert scanner.file_count == first_file_count
+
+    def test_rescan_picks_up_new_files(self, sample_takeout):
+        """Verify rescanning picks up newly added files."""
+        scanner = FileScanner(sample_takeout)
+
+        # First scan
+        scanner.scan()
+        original_count = scanner.file_count
+
+        # Add a new file
+        import os
+        new_file = os.path.join(sample_takeout, "Album1", "new_photo.jpg")
+        with open(new_file, "wb") as f:
+            f.write(b"new data")
+
+        # Rescan
+        scanner.scan()
+
+        assert scanner.file_count == original_count + 1
+
+    def test_handles_unicode_filenames(self, temp_dir):
+        """Verify scanning handles unicode characters in filenames."""
+        import os
+        album = os.path.join(temp_dir, "Album")
+        os.makedirs(album)
+
+        # Create file with unicode name
+        filepath = os.path.join(album, "日本語_фото.jpg")
+        with open(filepath, "wb") as f:
+            f.write(b"data")
+
+        scanner = FileScanner(temp_dir)
+        scanner.scan()
+
+        assert scanner.file_count == 1
+        assert any("日本語" in f.filename for f in scanner.files)
+
 
 class TestScanDirectory:
     """Tests for scan_directory() convenience function."""

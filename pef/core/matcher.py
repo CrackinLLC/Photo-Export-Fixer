@@ -113,16 +113,24 @@ class FileMatcher:
 
         return ParsedTitle(name=name, extension=ext, brackets=brackets)
 
-    def find_match(self, json_path: str, title: str) -> MatchResult:
+    def find_match(
+        self,
+        json_path: str,
+        title: str,
+        file_index: Optional[FileIndex] = None
+    ) -> MatchResult:
         """Find media file(s) matching a JSON metadata file.
 
         Args:
             json_path: Path to the JSON metadata file.
             title: The "title" field from the JSON.
+            file_index: Optional alternative index to search in.
+                       If None, uses self.file_index.
 
         Returns:
             MatchResult indicating whether match was found and the file(s).
         """
+        index = file_index if file_index is not None else self.file_index
         parsed = self.parse_title(title, json_path)
         album_name = get_album_name(json_path)
 
@@ -131,10 +139,10 @@ class FileMatcher:
             filename = parsed.build_filename(suffix)
             key = (album_name, filename)
 
-            if key in self.file_index:
+            if key in index:
                 return MatchResult(
                     found=True,
-                    files=self.file_index[key],
+                    files=index[key],
                     json_path=json_path,
                     title=title
                 )
@@ -155,6 +163,9 @@ class FileMatcher:
     ) -> MatchResult:
         """Find match using a different file index (for extend mode).
 
+        .. deprecated::
+            Use find_match(json_path, title, file_index) instead.
+
         Args:
             json_path: Path to the JSON metadata file.
             title: The "title" field from the JSON.
@@ -163,27 +174,7 @@ class FileMatcher:
         Returns:
             MatchResult indicating whether match was found.
         """
-        parsed = self.parse_title(title, json_path)
-        album_name = get_album_name(json_path)
-
-        for suffix in self.suffixes:
-            filename = parsed.build_filename(suffix)
-            key = (album_name, filename)
-
-            if key in file_index:
-                return MatchResult(
-                    found=True,
-                    files=file_index[key],
-                    json_path=json_path,
-                    title=title
-                )
-
-        return MatchResult(
-            found=False,
-            files=[],
-            json_path=json_path,
-            title=title
-        )
+        return self.find_match(json_path, title, file_index)
 
 
 # Convenience function for backwards compatibility (deprecated)

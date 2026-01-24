@@ -9,7 +9,9 @@
       "Bash(git stash:*)",
       "Bash(ruff:*)",
       "Bash(tree:*)",
-      "Bash(python -m pytest:*)"
+      "Bash(python -m pytest:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)"
     ]
   }
 }

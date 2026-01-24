@@ -205,18 +205,47 @@ class FileProcessor:
 
         return files
 
-    def extend_metadata(self, filepath: str, metadata: JsonMetadata) -> bool:
+    def extend_metadata(
+        self,
+        filepath: str,
+        metadata: JsonMetadata,
+        skip_if_tagged: bool = True
+    ) -> bool:
         """Write metadata to an existing file without copying.
 
         Args:
             filepath: Path to existing file.
             metadata: Metadata to write.
+            skip_if_tagged: If True, skip files that already have the metadata.
 
         Returns:
-            True if successful.
+            True if successful (or skipped because already tagged).
         """
         if not self._exiftool:
             return False
+
+        # Optimization: Check if file already has the metadata we want to write
+        if skip_if_tagged:
+            tags_to_check = []
+            if metadata.geo_data and metadata.geo_data.is_valid():
+                tags_to_check.append("GPSLatitude")
+            if metadata.people:
+                tags_to_check.append("PersonInImage")
+
+            if tags_to_check:
+                existing = self._exiftool.read_tags(filepath, tags_to_check)
+                # Check if all desired tags already exist
+                has_gps = "EXIF:GPSLatitude" in existing or "Composite:GPSLatitude" in existing
+                has_people = "XMP:PersonInImage" in existing
+
+                needs_gps = metadata.geo_data and metadata.geo_data.is_valid()
+                needs_people = bool(metadata.people)
+
+                if (not needs_gps or has_gps) and (not needs_people or has_people):
+                    # Already tagged, skip
+                    if self.logger:
+                        self.logger.log(f"Skipped (already tagged): {filepath}")
+                    return True
 
         return self._write_metadata(filepath, metadata)
 

@@ -86,6 +86,45 @@ class TestCheckoutDir:
         assert result == os.path.join(temp_dir, "dir(1)")
         assert os.path.isdir(result)
 
+    def test_existing_dir_no_onlynew_returns_same(self, temp_dir):
+        """Verify existing directory returned as-is when onlynew=False."""
+        path = os.path.join(temp_dir, "existing")
+        os.makedirs(path)
+
+        result = checkout_dir(path, onlynew=False)
+        assert result == path
+        assert os.path.isdir(result)
+
+    def test_onlynew_creates_multiple_unique(self, temp_dir):
+        """Verify onlynew creates sequentially numbered directories."""
+        path = os.path.join(temp_dir, "dir")
+        os.makedirs(path)
+
+        result1 = checkout_dir(path, onlynew=True)
+        assert result1 == os.path.join(temp_dir, "dir(1)")
+
+        result2 = checkout_dir(path, onlynew=True)
+        assert result2 == os.path.join(temp_dir, "dir(2)")
+
+    def test_creates_nested_directories(self, temp_dir):
+        """Verify nested directories are created."""
+        path = os.path.join(temp_dir, "a", "b", "c")
+        result = checkout_dir(path)
+
+        assert result == path
+        assert os.path.isdir(path)
+
+    def test_raises_error_if_file_exists(self, temp_dir):
+        """Verify error raised when path is an existing file."""
+        filepath = os.path.join(temp_dir, "is_a_file")
+        with open(filepath, "w") as f:
+            f.write("test content")
+
+        with pytest.raises(ValueError) as excinfo:
+            checkout_dir(filepath)
+
+        assert "exists as a file" in str(excinfo.value)
+
 
 class TestGetAlbumName:
     """Tests for get_album_name() function."""

@@ -5,9 +5,12 @@ from datetime import datetime
 from typing import Optional, List, Dict, Callable, Any, Tuple
 
 
-@dataclass
+@dataclass(slots=True)
 class FileInfo:
-    """Represents a media file found during scanning."""
+    """Represents a media file found during scanning.
+
+    Uses __slots__ for 30-50% memory reduction on large collections.
+    """
     filename: str
     filepath: str
     albumname: str
@@ -18,9 +21,12 @@ class FileInfo:
     processed_time: Optional[str] = None
 
 
-@dataclass
+@dataclass(slots=True)
 class GeoData:
-    """GPS coordinates from photo metadata."""
+    """GPS coordinates from photo metadata.
+
+    Uses __slots__ for memory efficiency.
+    """
     latitude: float
     longitude: float
     altitude: float = 0.0
@@ -41,9 +47,12 @@ class GeoData:
         return self.latitude != 0 or self.longitude != 0
 
 
-@dataclass
+@dataclass(slots=True)
 class Person:
-    """A person tagged in a photo."""
+    """A person tagged in a photo.
+
+    Uses __slots__ for memory efficiency.
+    """
     name: str
 
     @classmethod

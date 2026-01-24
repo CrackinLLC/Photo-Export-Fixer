@@ -161,6 +161,83 @@ class TestFindFile:
         assert files[0]["title"] == "missing.jpg"
 
 
+class TestMatchResult:
+    """Tests for MatchResult dataclass."""
+
+    def test_is_matched_true_when_found(self):
+        from pef.core.matcher import MatchResult
+        result = MatchResult(found=True, files=[], json_path="/test.json", title="test.jpg")
+        assert result.is_matched is True
+
+    def test_is_matched_false_when_not_found(self):
+        from pef.core.matcher import MatchResult
+        result = MatchResult(found=False, files=[], json_path="/test.json", title="test.jpg")
+        assert result.is_matched is False
+
+    def test_is_matched_alias_for_found(self):
+        from pef.core.matcher import MatchResult
+        result = MatchResult(found=True, files=[], json_path="/test.json", title="test.jpg")
+        assert result.is_matched == result.found
+
+
+class TestFileMatcherFindMatchInIndex:
+    """Tests for FileMatcher.find_match_in_index() method."""
+
+    def test_uses_provided_index_not_default(self):
+        """Verify find_match_in_index uses the provided index, not self.file_index."""
+        default_index = {
+            ("Album1", "photo.jpg"): [FileInfo("photo.jpg", "/default/photo.jpg", "Album1")]
+        }
+        alternate_index = {
+            ("Album1", "photo.jpg"): [FileInfo("photo.jpg", "/alternate/photo.jpg", "Album1")]
+        }
+
+        matcher = FileMatcher(default_index)
+        result = matcher.find_match_in_index(
+            "/path/Album1/photo.jpg.json",
+            "photo.jpg",
+            alternate_index
+        )
+
+        assert result.found is True
+        assert result.files[0].filepath == "/alternate/photo.jpg"
+
+    def test_returns_empty_when_not_in_provided_index(self):
+        """Verify returns not found when file not in provided index."""
+        default_index = {
+            ("Album1", "photo.jpg"): [FileInfo("photo.jpg", "/default/photo.jpg", "Album1")]
+        }
+        empty_index = {}
+
+        matcher = FileMatcher(default_index)
+        result = matcher.find_match_in_index(
+            "/path/Album1/photo.jpg.json",
+            "photo.jpg",
+            empty_index
+        )
+
+        assert result.found is False
+        assert len(result.files) == 0
+
+    def test_tries_suffixes_in_order(self):
+        """Verify suffixes are tried in order."""
+        index = {
+            ("Album1", "photo-edited.jpg"): [
+                FileInfo("photo-edited.jpg", "/path/photo-edited.jpg", "Album1")
+            ]
+        }
+
+        matcher = FileMatcher({}, suffixes=["", "-edited", "-backup"])
+        result = matcher.find_match_in_index(
+            "/path/Album1/photo.jpg.json",
+            "photo.jpg",
+            index
+        )
+
+        assert result.found is True
+        assert result.files[0].filename == "photo-edited.jpg"
+
+
 class TestDefaultSuffixes:
     """Tests for DEFAULT_SUFFIXES constant."""
 
