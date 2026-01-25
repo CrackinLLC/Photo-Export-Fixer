@@ -118,6 +118,12 @@ class FileScanner:
                     )
                     self.files.append(file_info)
 
+                    # Build index during scan (avoids second pass)
+                    key = (album_name, filename)
+                    if key not in self.file_index:
+                        self.file_index[key] = []
+                    self.file_index[key].append(file_info)
+
                 files_found += 1
 
                 # Update progress periodically
@@ -127,9 +133,6 @@ class FileScanner:
                     # Increase interval as we find more files to reduce overhead
                     if files_found >= 1000 and progress_interval < 500:
                         progress_interval = 500
-
-        # Build index for O(1) lookups
-        self._build_index()
         self._scanned = True
 
         if on_progress:
@@ -137,7 +140,11 @@ class FileScanner:
             on_progress(total, total, "Scan complete")
 
     def _build_index(self) -> None:
-        """Build the file index for fast lookups."""
+        """Build the file index for fast lookups.
+
+        Note: This is now only used for rescanning. During initial scan,
+        the index is built incrementally for better performance.
+        """
         self.file_index = {}
         for file_info in self.files:
             key = (file_info.album_name, file_info.filename)

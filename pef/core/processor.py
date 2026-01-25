@@ -87,6 +87,9 @@ class FileProcessor:
         self._batch_size = batch_size
         self._copy_workers = copy_workers
 
+        # Cache for created directories (avoids redundant os.makedirs calls)
+        self._created_dirs: set = set()
+
     def start(self) -> None:
         """Start the processor (initialize ExifTool if needed)."""
         if self.write_exif:
@@ -111,6 +114,23 @@ class FileProcessor:
         self.flush_metadata_writes()
         self.stop()
 
+    def _get_album_dir(self, album_name: str) -> str:
+        """Get album directory path, creating it if needed.
+
+        Uses caching to avoid redundant os.makedirs() calls.
+
+        Args:
+            album_name: Name of the album (folder).
+
+        Returns:
+            Path to the album directory.
+        """
+        album_dir = os.path.join(self.output_dir, album_name)
+        if album_dir not in self._created_dirs:
+            checkout_dir(album_dir)
+            self._created_dirs.add(album_dir)
+        return album_dir
+
     def _build_tags(self, metadata: JsonMetadata) -> Dict[str, Any]:
         """Build EXIF tags dict from metadata.
 
@@ -120,6 +140,10 @@ class FileProcessor:
         Returns:
             Dict of ExifTool tags, empty if no metadata to write.
         """
+        # Early return if no metadata to write
+        if not metadata.geo_data and not metadata.people:
+            return {}
+
         tags = {}
 
         if metadata.geo_data:
@@ -215,7 +239,7 @@ class FileProcessor:
             Path to the processed file.
         """
         # Create album directory directly under output_dir (no /Processed subdir)
-        album_dir = checkout_dir(os.path.join(self.output_dir, file.album_name))
+        album_dir = self._get_album_dir(file.album_name)
 
         # Get unique destination path
         dest_path = get_unique_path(os.path.join(album_dir, file.filename))
@@ -295,7 +319,7 @@ class FileProcessor:
         # Prepare all destinations and tasks
         tasks = []
         for file, metadata in files_with_metadata:
-            album_dir = checkout_dir(os.path.join(self.output_dir, file.album_name))
+            album_dir = self._get_album_dir(file.album_name)
             dest_path = get_unique_path(os.path.join(album_dir, file.filename))
             tasks.append((file, metadata, dest_path))
 
@@ -384,7 +408,7 @@ class FileProcessor:
             Path to copied file.
         """
         # Create album directory under output_dir (same structure as processed)
-        album_dir = checkout_dir(os.path.join(self.output_dir, file.album_name))
+        album_dir = self._get_album_dir(file.album_name)
 
         # Check if this is a motion photo sidecar
         ext_lower = os.path.splitext(file.filename)[1].lower()

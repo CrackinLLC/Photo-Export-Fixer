@@ -109,7 +109,7 @@ class JsonMetadata:
         return None
 
 
-@dataclass
+@dataclass(slots=True)
 class UnprocessedItem:
     """A file that was copied but had no matching JSON metadata."""
     relative_path: str  # Path relative to output root (e.g., "Album/photo.jpg")
@@ -117,7 +117,7 @@ class UnprocessedItem:
     source_path: str = ""  # Original source path
 
 
-@dataclass
+@dataclass(slots=True)
 class MotionPhotoInfo:
     """Information about a motion photo sidecar file."""
     relative_path: str  # Path relative to output (e.g., "Album/photo.jpg.MP")

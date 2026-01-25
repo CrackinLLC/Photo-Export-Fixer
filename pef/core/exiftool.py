@@ -15,6 +15,17 @@ logger = logging.getLogger(__name__)
 EXIFTOOL_DIR = os.path.join("tools", "exiftool")
 EXIFTOOL_EXE = "exiftool.exe" if sys.platform == "win32" else "exiftool"
 
+# Module-level cache for exiftool path (avoids repeated filesystem checks)
+_exiftool_path_cache: Optional[str] = None
+_exiftool_path_checked: bool = False
+
+
+def _reset_exiftool_cache() -> None:
+    """Reset the ExifTool path cache. Used for testing."""
+    global _exiftool_path_cache, _exiftool_path_checked
+    _exiftool_path_cache = None
+    _exiftool_path_checked = False
+
 
 def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
     """Find ExifTool executable.
@@ -24,6 +35,10 @@ def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
     2. Local tools directory
     3. Attempts auto-download (Windows only)
 
+    Results are cached to avoid repeated filesystem checks.
+    Note: When base_dir is specified, caching is bypassed to allow
+    testing with different directories.
+
     Args:
         base_dir: Base directory for local tools folder.
                  Defaults to directory containing this module.
@@ -31,8 +46,20 @@ def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
     Returns:
         Path to exiftool executable, or None if not found.
     """
+    global _exiftool_path_cache, _exiftool_path_checked
+
+    # Track whether to use/update cache (only for default base_dir)
+    use_cache = base_dir is None
+
+    # Return cached result if available (only when using default base_dir)
+    if use_cache and _exiftool_path_checked:
+        return _exiftool_path_cache
+
     # 1. Check system PATH
     if shutil.which("exiftool"):
+        if use_cache:
+            _exiftool_path_cache = "exiftool"
+            _exiftool_path_checked = True
         return "exiftool"
 
     # 2. Check local tools folder
@@ -42,15 +69,24 @@ def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
 
     local_path = os.path.join(base_dir, EXIFTOOL_DIR, EXIFTOOL_EXE)
     if os.path.exists(local_path):
+        if use_cache:
+            _exiftool_path_cache = local_path
+            _exiftool_path_checked = True
         return local_path
 
     # 3. Attempt auto-download (Windows only)
     if sys.platform == "win32":
         if auto_download_exiftool(base_dir):
+            if use_cache:
+                _exiftool_path_cache = local_path
+                _exiftool_path_checked = True
             return local_path
 
     # Not found
     logger.warning("ExifTool not found. Install from https://exiftool.org/")
+    if use_cache:
+        _exiftool_path_cache = None
+        _exiftool_path_checked = True
     return None
 
 
@@ -135,17 +171,12 @@ def print_install_instructions() -> None:
 def is_exiftool_available() -> bool:
     """Check if ExifTool is available.
 
+    Uses cached path lookup for efficiency.
+
     Returns:
         True if ExifTool can be found.
     """
-    # Check PATH first (quick)
-    if shutil.which("exiftool"):
-        return True
-
-    # Check local tools folder
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    local_path = os.path.join(base_dir, EXIFTOOL_DIR, EXIFTOOL_EXE)
-    return os.path.exists(local_path)
+    return get_exiftool_path() is not None
 
 
 class ExifToolManager:

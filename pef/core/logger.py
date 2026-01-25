@@ -8,11 +8,14 @@ from typing import Optional, TextIO, List, Dict, Any, Union
 class BufferedLogger:
     """Buffered file logger with context manager support.
 
+    Buffers log entries in memory before writing to disk in batches,
+    reducing I/O overhead for verbose logging.
+
     Usage:
         with BufferedLogger("/path/to/logs") as logger:
             logger.log("Processing started")
             logger.log("File processed: photo.jpg")
-        # File is automatically closed
+        # File is automatically closed and flushed
 
     Or manual management:
         logger = BufferedLogger("/path/to/logs")
@@ -22,17 +25,28 @@ class BufferedLogger:
             logger.close()
     """
 
-    def __init__(self, output_dir: str, filename: str = "detailed_logs.txt"):
+    # Number of log entries to buffer before writing to disk
+    DEFAULT_BUFFER_SIZE = 20
+
+    def __init__(
+        self,
+        output_dir: str,
+        filename: str = "detailed_logs.txt",
+        buffer_size: int = DEFAULT_BUFFER_SIZE
+    ):
         """Initialize logger.
 
         Args:
             output_dir: Directory to write log file.
             filename: Name of log file (default: detailed_logs.txt).
+            buffer_size: Number of entries to buffer before flushing (default: 20).
         """
         self.output_dir = output_dir
         self.filename = filename
         self.filepath = os.path.join(output_dir, filename)
         self._handle: Optional[TextIO] = None
+        self._buffer: List[str] = []
+        self._buffer_size = buffer_size
 
     def _open(self) -> None:
         """Open the log file for writing (lazy initialization)."""
@@ -43,20 +57,29 @@ class BufferedLogger:
     def log(self, message: str) -> None:
         """Write a timestamped message to the log.
 
+        Messages are buffered and written in batches for efficiency.
+
         Args:
             message: Message to log.
         """
-        self._open()  # Lazy open on first log
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        self._handle.write(f"{timestamp} - {message}\n")
+        self._buffer.append(f"{timestamp} - {message}\n")
+
+        # Flush when buffer is full
+        if len(self._buffer) >= self._buffer_size:
+            self.flush()
 
     def flush(self) -> None:
         """Flush the log buffer to disk."""
-        if self._handle:
+        if self._buffer:
+            self._open()  # Lazy open on first flush
+            self._handle.writelines(self._buffer)
+            self._buffer.clear()
             self._handle.flush()
 
     def close(self) -> None:
-        """Close the log file."""
+        """Close the log file, flushing any remaining buffer."""
+        self.flush()  # Flush remaining entries
         if self._handle:
             self._handle.close()
             self._handle = None
@@ -71,8 +94,8 @@ class BufferedLogger:
 
     @property
     def is_open(self) -> bool:
-        """Check if logger is open."""
-        return self._handle is not None
+        """Check if logger is active (has pending entries or open file handle)."""
+        return self._handle is not None or len(self._buffer) > 0
 
 
 class SummaryLogger:
