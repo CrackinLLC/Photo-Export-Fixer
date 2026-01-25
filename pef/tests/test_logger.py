@@ -1,7 +1,6 @@
 """Tests for pef.core.logger module."""
 
 import os
-import pytest
 
 from pef.core.logger import (
     BufferedLogger,

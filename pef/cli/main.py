@@ -82,7 +82,7 @@ def run_dry_run(
         print(f"Error: Path does not exist: {path}")
         return 1
 
-    dest = destination or f"{path}_pefProcessed"
+    dest = destination or f"{path}_processed"
 
     print(f"Source: {path}")
     print(f"Destination: {dest}")
@@ -101,16 +101,16 @@ def run_dry_run(
     finally:
         pbar.close()
 
-    print(f"\nFound:")
+    print("\nFound:")
     print(f"  {result.json_count} JSON metadata files")
     print(f"  {result.file_count} media files")
 
-    print(f"\nWould process:")
+    print("\nWould process:")
     print(f"  {result.matched_count} files with matching JSON")
     print(f"  {result.unmatched_json_count} JSONs without matching file")
     print(f"  {result.unmatched_file_count} files without matching JSON")
 
-    print(f"\nMetadata available:")
+    print("\nMetadata available:")
     print(f"  {result.with_gps} files with GPS coordinates")
     print(f"  {result.with_people} files with people tags")
 
@@ -129,7 +129,8 @@ def run_process(
     suffixes: List[str],
     write_exif: bool,
     force: bool = False,
-    verbose: bool = False
+    verbose: bool = False,
+    rename_mp: bool = False
 ) -> int:
     """Run main processing.
 
@@ -140,6 +141,7 @@ def run_process(
         write_exif: Whether to write EXIF metadata.
         force: If True, ignore existing state and start fresh.
         verbose: If True, log all operations (not just errors).
+        rename_mp: If True, rename .MP files to .MP4.
 
     Returns:
         Exit code (0 for success).
@@ -153,7 +155,8 @@ def run_process(
         dest_path=destination,
         suffixes=suffixes,
         write_exif=write_exif,
-        verbose=verbose
+        verbose=verbose,
+        rename_mp=rename_mp
     )
 
     print("\nProcess started...")
@@ -183,7 +186,7 @@ def run_process(
         print(f"\nResumed from previous run (skipped {result.skipped_count} already processed)")
 
     if result.errors:
-        print(f"\nWarnings/Errors:")
+        print("\nWarnings/Errors:")
         for error in result.errors[:10]:  # Show first 10
             print(f"  {error}")
         if len(result.errors) > 10:
@@ -195,11 +198,13 @@ def run_process(
         print(f"  (plus {result.skipped_count} from previous run)")
     print(f"  With GPS: {result.stats.with_gps}")
     print(f"  With people: {result.stats.with_people}")
-    print(f"Unprocessed: {result.stats.unmatched_files} files, {result.stats.unmatched_jsons} jsons")
+    if result.unprocessed_items:
+        print(f"Files without metadata: {len(result.unprocessed_items)}")
+    if result.motion_photo_count > 0:
+        print(f"Motion photos preserved: {result.motion_photo_count}")
     print(f"Time used: {result.elapsed_time} seconds")
-    print(f"\nFolder with processed files:\n  {result.processed_dir}")
-    print(f"Folder with unprocessed files:\n  {result.unprocessed_dir}")
-    print(f"Logs saved in:\n  {result.log_file}")
+    print(f"\nOutput directory:\n  {result.output_dir}")
+    print(f"Logs and metadata:\n  {result.pef_dir}")
 
     return 0
 
@@ -270,6 +275,12 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true"
     )
 
+    parser.add_argument(
+        "--rename-mp",
+        help="Rename .MP motion photo files to .MP4 for better compatibility",
+        action="store_true"
+    )
+
     return parser.parse_args(args)
 
 
@@ -306,7 +317,8 @@ def main(args: Optional[List[str]] = None) -> int:
             path, destination, suffixes,
             write_exif=not parsed.no_exif,
             force=parsed.force,
-            verbose=parsed.verbose
+            verbose=parsed.verbose,
+            rename_mp=parsed.rename_mp
         )
 
 

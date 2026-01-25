@@ -2,7 +2,6 @@
 
 from datetime import datetime
 
-import pytest
 
 from pef.core.models import (
     FileInfo,
@@ -12,7 +11,7 @@ from pef.core.models import (
     ProcessingStats,
     UnprocessedItem,
     DryRunResult,
-    ProcessResult,
+    ProcessRunResult,
 )
 
 
@@ -239,26 +238,22 @@ class TestUnprocessedItem:
 
     def test_basic_creation(self):
         item = UnprocessedItem(
-            filename="photo.jpg",
-            filepath="/path/to/photo.jpg"
+            relative_path="Album/photo.jpg",
+            reason="No matching JSON found"
         )
-        assert item.filename == "photo.jpg"
-        assert item.filepath == "/path/to/photo.jpg"
-        assert item.title == ""
-        assert item.reason == ""
+        assert item.relative_path == "Album/photo.jpg"
+        assert item.reason == "No matching JSON found"
+        assert item.source_path == ""
 
     def test_with_all_fields(self):
         item = UnprocessedItem(
-            filename="photo.jpg",
-            filepath="/path/to/photo.jpg",
-            title="Original Photo",
-            reason="No matching JSON",
-            processed_time="2021-01-01 12:00:00",
-            output_path="/output/photo.jpg"
+            relative_path="Album/photo.jpg",
+            reason="No matching JSON found",
+            source_path="/path/to/photo.jpg"
         )
-        assert item.title == "Original Photo"
-        assert item.reason == "No matching JSON"
-        assert item.output_path == "/output/photo.jpg"
+        assert item.relative_path == "Album/photo.jpg"
+        assert item.reason == "No matching JSON found"
+        assert item.source_path == "/path/to/photo.jpg"
 
 
 class TestDryRunResult:
@@ -285,17 +280,16 @@ class TestDryRunResult:
         assert result.unmatched_file_count == 0
 
 
-class TestProcessResultClass:
-    """Tests for ProcessResult dataclass."""
+class TestProcessRunResultClass:
+    """Tests for ProcessRunResult dataclass."""
 
     def test_basic_creation(self):
         stats = ProcessingStats(processed=10)
-        result = ProcessResult(
+        result = ProcessRunResult(
             stats=stats,
             output_dir="/output",
-            processed_dir="/output/Processed",
-            unprocessed_dir="/output/Unprocessed",
-            log_file="/output/logs.txt",
+            pef_dir="/output/_pef",
+            summary_file="/output/_pef/summary.txt",
             elapsed_time=5.5,
             start_time="2021-01-01 12:00:00",
             end_time="2021-01-01 12:00:05"
@@ -308,12 +302,11 @@ class TestProcessResultClass:
     def test_resume_fields_defaults(self):
         """Verify resume fields default to False/0."""
         stats = ProcessingStats()
-        result = ProcessResult(
+        result = ProcessRunResult(
             stats=stats,
             output_dir="/output",
-            processed_dir="/output/Processed",
-            unprocessed_dir="/output/Unprocessed",
-            log_file="/output/logs.txt",
+            pef_dir="/output/_pef",
+            summary_file="/output/_pef/summary.txt",
             elapsed_time=0,
             start_time="",
             end_time=""
@@ -325,12 +318,11 @@ class TestProcessResultClass:
     def test_resume_fields_set_explicitly(self):
         """Verify resume fields can be set explicitly."""
         stats = ProcessingStats()
-        result = ProcessResult(
+        result = ProcessRunResult(
             stats=stats,
             output_dir="/output",
-            processed_dir="/output/Processed",
-            unprocessed_dir="/output/Unprocessed",
-            log_file="/output/logs.txt",
+            pef_dir="/output/_pef",
+            summary_file="/output/_pef/summary.txt",
             elapsed_time=0,
             start_time="",
             end_time="",

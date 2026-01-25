@@ -6,7 +6,6 @@ workflow works correctly end-to-end.
 
 import json
 import os
-import shutil
 
 import pytest
 

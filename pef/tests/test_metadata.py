@@ -1,12 +1,9 @@
 """Tests for pef.core.metadata module."""
 
-import pytest
 
 from pef.core.metadata import (
     build_gps_tags,
-    build_gps_tags_from_dict,
     build_people_tags,
-    build_people_tags_from_list,
     build_all_tags,
 )
 from pef.core.models import GeoData, Person
@@ -68,30 +65,6 @@ class TestBuildGpsTags:
         assert tags["GPSAltitudeRef"] == 0
 
 
-class TestBuildGpsTagsFromDict:
-    """Tests for build_gps_tags_from_dict() backwards-compat function."""
-
-    def test_none_returns_empty(self):
-        assert build_gps_tags_from_dict(None) == {}
-
-    def test_valid_dict(self):
-        geo_dict = {"latitude": 40.7128, "longitude": -74.0060, "altitude": 10}
-        tags = build_gps_tags_from_dict(geo_dict)
-
-        assert "GPSLatitude" in tags
-        assert tags["GPSLatitude"] == 40.7128
-
-    def test_zero_coords_are_valid(self):
-        """(0,0) is a valid location and should produce GPS tags."""
-        geo_dict = {"latitude": 0, "longitude": 0}
-        tags = build_gps_tags_from_dict(geo_dict)
-
-        assert tags["GPSLatitude"] == 0
-        assert tags["GPSLatitudeRef"] == "N"
-        assert tags["GPSLongitude"] == 0
-        assert tags["GPSLongitudeRef"] == "E"
-
-
 class TestBuildPeopleTags:
     """Tests for build_people_tags() function."""
 
@@ -128,28 +101,6 @@ class TestBuildPeopleTags:
 
         assert "日本語" in tags["PersonInImage"]
         assert "Müller" in tags["PersonInImage"]
-
-
-class TestBuildPeopleTagsFromList:
-    """Tests for build_people_tags_from_list() backwards-compat function."""
-
-    def test_none_returns_empty(self):
-        assert build_people_tags_from_list(None) == {}
-
-    def test_empty_list_returns_empty(self):
-        assert build_people_tags_from_list([]) == {}
-
-    def test_valid_list(self):
-        people_list = [{"name": "Alice"}, {"name": "Bob"}]
-        tags = build_people_tags_from_list(people_list)
-
-        assert tags["PersonInImage"] == ["Alice", "Bob"]
-
-    def test_filters_invalid_entries(self):
-        people_list = [{"name": "Alice"}, {"other": "data"}, {"name": "Bob"}]
-        tags = build_people_tags_from_list(people_list)
-
-        assert tags["PersonInImage"] == ["Alice", "Bob"]
 
 
 class TestBuildAllTags:

@@ -105,11 +105,9 @@ class TestAutoDownloadExiftool:
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only auto-download")
     def test_creates_tools_directory(self, temp_dir):
-        tools_dir = os.path.join(temp_dir, EXIFTOOL_DIR)
-
         with patch('urllib.request.urlopen') as mock_urlopen:
             with patch('urllib.request.urlretrieve') as mock_retrieve:
-                with patch('zipfile.ZipFile') as mock_zip:
+                with patch('zipfile.ZipFile'):
                     # Mock version check
                     mock_response = MagicMock()
                     mock_response.read.return_value = b"12.50"

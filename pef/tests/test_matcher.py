@@ -1,9 +1,8 @@
 """Tests for pef.core.matcher module."""
 
-import warnings
 import pytest
 
-from pef.core.matcher import FileMatcher, ParsedTitle, find_file, DEFAULT_SUFFIXES
+from pef.core.matcher import FileMatcher, ParsedTitle, DEFAULT_SUFFIXES
 from pef.core.models import FileInfo
 
 
@@ -102,65 +101,6 @@ class TestFileMatcher:
         assert len(result.files) == 0
 
 
-class TestFindFile:
-    """Tests for find_file() backwards-compatible function."""
-
-    @pytest.fixture
-    def dict_index(self):
-        """Create index using dict format for backwards compat."""
-        return {
-            ("Album1", "photo.jpg"): [
-                {"filename": "photo.jpg", "filepath": "/path/Album1/photo.jpg", "albumname": "Album1"}
-            ],
-            ("Album1", "photo-edited.jpg"): [
-                {"filename": "photo-edited.jpg", "filepath": "/path/Album1/photo-edited.jpg", "albumname": "Album1"}
-            ],
-        }
-
-    def test_emits_deprecation_warning(self, dict_index):
-        jsondata = {"title": "photo.jpg", "filepath": "/Album1/photo.jpg.json"}
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            find_file(jsondata, dict_index, DEFAULT_SUFFIXES)
-
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-
-    def test_returns_tuple(self, dict_index):
-        jsondata = {"title": "photo.jpg", "filepath": "/Album1/photo.jpg.json"}
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            result = find_file(jsondata, dict_index, DEFAULT_SUFFIXES)
-
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-
-    def test_finds_match(self, dict_index):
-        jsondata = {"title": "photo.jpg", "filepath": "/Album1/photo.jpg.json"}
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            found, files = find_file(jsondata, dict_index, DEFAULT_SUFFIXES)
-
-        assert found is True
-        assert len(files) == 1
-        assert files[0]["filename"] == "photo.jpg"
-
-    def test_not_found(self, dict_index):
-        jsondata = {"title": "missing.jpg", "filepath": "/Album1/missing.jpg.json"}
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            found, files = find_file(jsondata, dict_index, DEFAULT_SUFFIXES)
-
-        assert found is False
-        # When not found, returns a list with json info for logging purposes
-        assert len(files) == 1
-        assert files[0]["title"] == "missing.jpg"
-
-
 class TestMatchResult:
     """Tests for MatchResult dataclass."""
 
@@ -180,11 +120,11 @@ class TestMatchResult:
         assert result.is_matched == result.found
 
 
-class TestFileMatcherFindMatchInIndex:
-    """Tests for FileMatcher.find_match_in_index() method."""
+class TestFileMatcherWithAlternateIndex:
+    """Tests for FileMatcher.find_match() with alternate file_index parameter."""
 
     def test_uses_provided_index_not_default(self):
-        """Verify find_match_in_index uses the provided index, not self.file_index."""
+        """Verify find_match uses the provided index, not self.file_index."""
         default_index = {
             ("Album1", "photo.jpg"): [FileInfo("photo.jpg", "/default/photo.jpg", "Album1")]
         }
@@ -193,7 +133,7 @@ class TestFileMatcherFindMatchInIndex:
         }
 
         matcher = FileMatcher(default_index)
-        result = matcher.find_match_in_index(
+        result = matcher.find_match(
             "/path/Album1/photo.jpg.json",
             "photo.jpg",
             alternate_index
@@ -210,7 +150,7 @@ class TestFileMatcherFindMatchInIndex:
         empty_index = {}
 
         matcher = FileMatcher(default_index)
-        result = matcher.find_match_in_index(
+        result = matcher.find_match(
             "/path/Album1/photo.jpg.json",
             "photo.jpg",
             empty_index
@@ -228,7 +168,7 @@ class TestFileMatcherFindMatchInIndex:
         }
 
         matcher = FileMatcher({}, suffixes=["", "-edited", "-backup"])
-        result = matcher.find_match_in_index(
+        result = matcher.find_match(
             "/path/Album1/photo.jpg.json",
             "photo.jpg",
             index

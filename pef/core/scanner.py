@@ -2,11 +2,9 @@
 
 import logging
 import os
-import warnings
-from typing import List, Dict, Tuple, Optional, Iterator
+from typing import Dict, List, Tuple, Optional, Iterator
 
 from pef.core.models import FileInfo, FileIndex, ProgressCallback
-from pef.core.utils import get_album_name
 
 logger = logging.getLogger(__name__)
 
@@ -222,47 +220,3 @@ def scan_directory(
     return scanner.jsons, scanner.files, scanner.file_index
 
 
-# Backwards-compatible function signature (deprecated)
-def get_file_names(path: str) -> Tuple[List[str], List[Dict], Dict]:
-    """Scan directory and return files (backwards compatible).
-
-    .. deprecated::
-        Use FileScanner class directly instead.
-
-    Args:
-        path: Directory to scan.
-
-    Returns:
-        Tuple of (json_paths, file_dicts, file_index_dicts).
-    """
-    warnings.warn(
-        "get_file_names() is deprecated. Use FileScanner class directly instead.",
-        DeprecationWarning,
-        stacklevel=2
-    )
-    scanner = FileScanner(path)
-    scanner.scan()
-
-    # Convert FileInfo to dict for backwards compatibility
-    files_as_dicts = [
-        {
-            "filename": f.filename,
-            "filepath": f.filepath,
-            "album_name": f.album_name,
-        }
-        for f in scanner.files
-    ]
-
-    # Convert index to use dicts
-    index_as_dicts = {}
-    for key, file_list in scanner.file_index.items():
-        index_as_dicts[key] = [
-            {
-                "filename": f.filename,
-                "filepath": f.filepath,
-                "album_name": f.album_name,
-            }
-            for f in file_list
-        ]
-
-    return scanner.jsons, files_as_dicts, index_as_dicts

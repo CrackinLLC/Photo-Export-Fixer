@@ -12,7 +12,9 @@
       "Bash(python -m pytest:*)",
       "Bash(pip install:*)",
       "Bash(python:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(powershell:*)"
     ]
   }
 }

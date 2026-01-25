@@ -9,7 +9,6 @@ from pef.core.models import (
     ProcessingStats,
     ProcessRunResult,
     DryRunResult,
-    ProcessResult,
     ProgressCallback,
     FileIndex,
 )
@@ -32,22 +31,18 @@ from pef.core.logger import (
 from pef.core.scanner import (
     FileScanner,
     scan_directory,
-    get_file_names,
 )
 
 from pef.core.matcher import (
     FileMatcher,
     MatchResult,
     ParsedTitle,
-    find_file,
     DEFAULT_SUFFIXES,
 )
 
 from pef.core.metadata import (
     build_gps_tags,
-    build_gps_tags_from_dict,
     build_people_tags,
-    build_people_tags_from_list,
     build_all_tags,
 )
 
@@ -59,7 +54,6 @@ from pef.core.exiftool import (
 
 from pef.core.processor import (
     FileProcessor,
-    copy_modify,
 )
 
 from pef.core.orchestrator import (
@@ -76,7 +70,6 @@ __all__ = [
     "ProcessingStats",
     "ProcessRunResult",
     "DryRunResult",
-    "ProcessResult",
     "ProgressCallback",
     "FileIndex",
     # Utils
@@ -93,18 +86,14 @@ __all__ = [
     # Scanner
     "FileScanner",
     "scan_directory",
-    "get_file_names",
     # Matcher
     "FileMatcher",
     "MatchResult",
     "ParsedTitle",
-    "find_file",
     "DEFAULT_SUFFIXES",
     # Metadata
     "build_gps_tags",
-    "build_gps_tags_from_dict",
     "build_people_tags",
-    "build_people_tags_from_list",
     "build_all_tags",
     # ExifTool
     "get_exiftool_path",
@@ -112,9 +101,6 @@ __all__ = [
     "ExifToolManager",
     # Processor
     "FileProcessor",
-    "copy_modify",
     # Orchestrator
     "PEFOrchestrator",
-    "DryRunResult",
-    "ProcessResult",
 ]

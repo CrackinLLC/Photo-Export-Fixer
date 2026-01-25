@@ -6,10 +6,11 @@ Used by both CLI and GUI.
 
 import logging
 import os
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Dict, Optional, List
+from typing import Dict, List, Optional
 
 # Use orjson for faster JSON parsing (3-10x faster than stdlib json)
 try:
@@ -19,19 +20,22 @@ except ImportError:
     import json
     _USE_ORJSON = False
 
-logger = logging.getLogger(__name__)
-
 from pef.core.models import (
-    FileInfo, JsonMetadata, GeoData, Person,
-    ProcessingStats, ProgressCallback, DryRunResult, ProcessResult
+    JsonMetadata, GeoData, Person,
+    ProcessingStats, ProgressCallback, DryRunResult, ProcessRunResult
 )
 from pef.core.utils import exists, checkout_dir
 from pef.core.scanner import FileScanner
 from pef.core.matcher import FileMatcher, DEFAULT_SUFFIXES
 from pef.core.processor import FileProcessor
-from pef.core.logger import BufferedLogger, SummaryLogger
+from pef.core.logger import PEFLogger
 from pef.core.exiftool import is_exiftool_available
 from pef.core.state import StateManager
+
+logger = logging.getLogger(__name__)
+
+# Name of the metadata directory within output
+PEF_DIR_NAME = "_pef"
 
 
 def _adaptive_interval(total: int) -> int:
@@ -87,22 +91,25 @@ class PEFOrchestrator:
         dest_path: Optional[str] = None,
         suffixes: Optional[List[str]] = None,
         write_exif: bool = True,
-        verbose: bool = False
+        verbose: bool = False,
+        rename_mp: bool = False
     ):
         """Initialize orchestrator.
 
         Args:
             source_path: Path to photo export directory.
-            dest_path: Output directory (default: source_path + "_pefProcessed").
+            dest_path: Output directory (default: source_path + "_processed").
             suffixes: Filename suffixes to try (default: ["", "-edited"]).
             write_exif: Whether to write EXIF metadata.
             verbose: If True, log all operations. If False, only log errors/warnings.
+            rename_mp: If True, rename .MP files to .MP4 for better compatibility.
         """
         self.source_path = source_path
-        self.dest_path = dest_path or f"{source_path}_pefProcessed"
+        self.dest_path = dest_path or f"{source_path}_processed"
         self.suffixes = suffixes or DEFAULT_SUFFIXES
         self.write_exif = write_exif
         self.verbose = verbose
+        self.rename_mp = rename_mp
         self._active_state: Optional[StateManager] = None
 
     def save_progress(self) -> bool:
@@ -202,7 +209,7 @@ class PEFOrchestrator:
         self,
         on_progress: Optional[ProgressCallback] = None,
         force: bool = False
-    ) -> ProcessResult:
+    ) -> ProcessRunResult:
         """Run full processing with automatic resume support.
 
         If a previous run was interrupted, processing will automatically
@@ -213,19 +220,18 @@ class PEFOrchestrator:
             force: If True, start fresh and ignore any previous progress.
 
         Returns:
-            ProcessResult with statistics and paths.
+            ProcessRunResult with statistics and paths.
         """
         start_time = time.time()
         start_date = time.strftime("%Y-%m-%d %H:%M:%S")
 
         # Validate source BEFORE creating output directory
         if not exists(self.source_path):
-            result = ProcessResult(
+            result = ProcessRunResult(
                 stats=ProcessingStats(),
                 output_dir=self.dest_path,
-                processed_dir="",
-                unprocessed_dir="",
-                log_file="",
+                pef_dir="",
+                summary_file="",
                 elapsed_time=0,
                 start_time=start_date,
                 end_time=""
@@ -234,7 +240,9 @@ class PEFOrchestrator:
             return result
 
         # Check for resume before creating new directory
-        state = StateManager(self.dest_path)
+        # State file is now in _pef subdirectory
+        potential_pef_dir = os.path.join(self.dest_path, PEF_DIR_NAME)
+        state = StateManager(potential_pef_dir)
         resuming = False
 
         if not force and state.can_resume():
@@ -261,12 +269,15 @@ class PEFOrchestrator:
             else:
                 output_dir = checkout_dir(self.dest_path, onlynew=True)
 
-        result = ProcessResult(
+        # Create _pef directory for all metadata/logs
+        pef_dir = os.path.join(output_dir, PEF_DIR_NAME)
+        os.makedirs(pef_dir, exist_ok=True)
+
+        result = ProcessRunResult(
             stats=ProcessingStats(),
             output_dir=output_dir,
-            processed_dir=os.path.join(output_dir, "Processed"),
-            unprocessed_dir=os.path.join(output_dir, "Unprocessed"),
-            log_file=os.path.join(output_dir, "logs.txt"),
+            pef_dir=pef_dir,
+            summary_file=os.path.join(pef_dir, "summary.txt"),
             elapsed_time=0,
             start_time=start_date,
             end_time=""
@@ -279,8 +290,8 @@ class PEFOrchestrator:
         scanner = FileScanner(self.source_path)
         scanner.scan()
 
-        # Initialize or update state manager (stored as instance var for interrupt handling)
-        self._active_state = StateManager(output_dir)
+        # Initialize or update state manager (stored in _pef for resume)
+        self._active_state = StateManager(pef_dir)
         if resuming:
             self._active_state.load()
         else:
@@ -299,16 +310,22 @@ class PEFOrchestrator:
 
         # Phase 2: Process matched files
         processed_files = []
-        unprocessed_jsons = []
+        unmatched_jsons = []  # JSONs that couldn't find matching files
         matched_file_paths = set()
 
-        with BufferedLogger(output_dir) as file_logger:
+        with PEFLogger(pef_dir, verbose=self.verbose) as pef_logger:
             if resuming:
-                file_logger.log(f"Resuming processing: {self.source_path} ({skipped_count} already done)")
+                pef_logger.log(f"Resuming processing: {self.source_path} ({skipped_count} already done)")
             else:
-                file_logger.log(f"Started processing: {self.source_path}")
+                pef_logger.log(f"Started processing: {self.source_path}")
 
-            with FileProcessor(output_dir, logger=file_logger, write_exif=self.write_exif, verbose=self.verbose) as processor:
+            with FileProcessor(
+                output_dir,
+                logger=pef_logger,
+                write_exif=self.write_exif,
+                verbose=self.verbose,
+                rename_mp=self.rename_mp
+            ) as processor:
                 matcher = FileMatcher(scanner.file_index, self.suffixes)
 
                 total = len(jsons_to_process)
@@ -324,15 +341,13 @@ class PEFOrchestrator:
 
                     metadata = self._read_json(json_path)
                     if not metadata:
-                        unprocessed_jsons.append({
-                            "filename": os.path.basename(json_path),
-                            "filepath": json_path,
-                            "title": "Invalid JSON"
-                        })
+                        # Invalid JSON - still save it to unmatched_data
+                        unmatched_jsons.append(json_path)
                         self._active_state.mark_processed(json_path)
                         continue
 
-                    match = matcher.find_match(json_path, metadata.title)
+                    # Use find_all_related_files to get original AND all edited variants
+                    match = matcher.find_all_related_files(json_path, metadata.title)
                     if match.found:
                         any_success = False
                         for file_info in match.files:
@@ -355,16 +370,13 @@ class PEFOrchestrator:
                             if metadata.has_people():
                                 processor.stats.with_people += 1
                     else:
-                        unprocessed_jsons.append({
-                            "filename": os.path.basename(json_path),
-                            "filepath": json_path,
-                            "title": metadata.title
-                        })
+                        # No matching file found - save JSON to unmatched_data
+                        unmatched_jsons.append(json_path)
 
                     # Mark this JSON as processed for resume capability
                     self._active_state.mark_processed(json_path)
 
-                # Phase 3: Handle unmatched files
+                # Phase 3: Handle unmatched files (copy all, track as unprocessed)
                 unmatched_files = [
                     f for f in scanner.files
                     if f.filepath not in matched_file_paths
@@ -373,37 +385,48 @@ class PEFOrchestrator:
                 if on_progress:
                     on_progress(0, len(unmatched_files), "[3/3] Copying unmatched files...")
 
-                unprocessed_file_records = []
                 unmatched_interval = _adaptive_interval(len(unmatched_files))
 
                 for i, file_info in enumerate(unmatched_files):
                     if on_progress and i % unmatched_interval == 0:
                         on_progress(i, len(unmatched_files), f"[3/3] Copying: {file_info.filename}")
 
-                    dest = processor.copy_unmatched_file(file_info)
-                    unprocessed_file_records.append({
-                        "filename": file_info.filename,
-                        "filepath": file_info.filepath,
-                        "output_path": dest
-                    })
+                    processor.copy_unmatched_file(file_info)
 
                 result.stats = processor.stats
+                result.unprocessed_items = processor.unprocessed_items
+                result.motion_photo_count = len(processor.motion_photos)
 
-        # Write summary log
-        end_time = time.time()
-        end_date = time.strftime("%Y-%m-%d %H:%M:%S")
-        result.elapsed_time = round(end_time - start_time, 3)
-        result.end_time = end_date
+                # Write unprocessed.txt and motion_photos.txt
+                pef_logger.write_unprocessed(processor.unprocessed_items)
+                pef_logger.write_motion_photos(processor.motion_photos)
 
-        summary = SummaryLogger(output_dir)
-        summary.write_summary(
-            processed=processed_files,
-            unprocessed=unprocessed_file_records,
-            unprocessed_jsons=unprocessed_jsons,
-            elapsed_time=result.elapsed_time,
-            start_time=start_date,
-            end_time=end_date
-        )
+            # Phase 4: Copy unmatched JSONs to _pef/unmatched_data/
+            if unmatched_jsons:
+                self._copy_unmatched_jsons(unmatched_jsons, pef_dir, on_progress)
+
+            # Write summary
+            end_time = time.time()
+            end_date = time.strftime("%Y-%m-%d %H:%M:%S")
+            result.elapsed_time = round(end_time - start_time, 3)
+            result.end_time = end_date
+
+            from pef.core.exiftool import get_exiftool_path
+            exiftool_path = get_exiftool_path() if is_exiftool_available() else None
+
+            pef_logger.write_summary(
+                source_path=self.source_path,
+                output_dir=output_dir,
+                stats=result.stats,
+                elapsed_time=result.elapsed_time,
+                start_time=start_date,
+                end_time=end_date,
+                motion_photo_count=result.motion_photo_count,
+                unprocessed_count=len(result.unprocessed_items),
+                unmatched_json_count=len(unmatched_jsons),
+                exiftool_available=is_exiftool_available(),
+                exiftool_path=exiftool_path
+            )
 
         # Mark processing as complete and clear active state
         self._active_state.complete()
@@ -413,6 +436,35 @@ class PEFOrchestrator:
             on_progress(total, total, "Processing complete")
 
         return result
+
+    def _copy_unmatched_jsons(
+        self,
+        json_paths: List[str],
+        pef_dir: str,
+        on_progress: Optional[ProgressCallback] = None
+    ) -> None:
+        """Copy unmatched JSON files to _pef/unmatched_data/ preserving structure.
+
+        Args:
+            json_paths: List of unmatched JSON file paths.
+            pef_dir: Path to the _pef directory.
+            on_progress: Optional progress callback.
+        """
+        unmatched_data_dir = os.path.join(pef_dir, "unmatched_data")
+
+        for json_path in json_paths:
+            # Get relative path from source to preserve structure
+            try:
+                rel_path = os.path.relpath(json_path, self.source_path)
+            except ValueError:
+                # On Windows, relpath fails across drives
+                rel_path = os.path.basename(json_path)
+
+            dest_path = os.path.join(unmatched_data_dir, rel_path)
+            dest_dir = os.path.dirname(dest_path)
+
+            os.makedirs(dest_dir, exist_ok=True)
+            shutil.copy(json_path, dest_path)
 
     def _read_json(self, path: str) -> Optional[JsonMetadata]:
         """Read and parse a JSON metadata file.

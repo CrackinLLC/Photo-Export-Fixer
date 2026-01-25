@@ -165,12 +165,16 @@ class PEFMainWindow:
                     dest_path=self.dest_path.get() or None,
                     write_exif=self.write_exif.get()
                 )
-                progress_cb = lambda c, t, m: self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
+
+                def progress_cb(c, t, m):
+                    self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
+
                 result = operation(orchestrator, progress_cb)
                 self.root.after(0, lambda: on_complete(result))
                 success = True
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+                error_msg = str(e)
+                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
             finally:
                 self.root.after(0, progress.close)
                 if not success:

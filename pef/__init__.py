@@ -24,7 +24,7 @@ __repo__ = "https://github.com/CrackinLLC/Photo-Export-Fixer"
 # Public API exports
 from pef.core.orchestrator import PEFOrchestrator
 from pef.core.models import (
-    ProcessResult,
+    ProcessRunResult,
     DryRunResult,
     ProcessingStats,
     JsonMetadata,
@@ -35,7 +35,7 @@ from pef.core.models import (
 
 __all__ = [
     "PEFOrchestrator",
-    "ProcessResult",
+    "ProcessRunResult",
     "DryRunResult",
     "ProcessingStats",
     "JsonMetadata",

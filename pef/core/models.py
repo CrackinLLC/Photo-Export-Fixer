@@ -3,7 +3,7 @@
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, List, Dict, Callable, Any, Tuple
+from typing import Optional, List, Dict, Callable, Tuple
 
 
 @dataclass(slots=True)
@@ -111,13 +111,18 @@ class JsonMetadata:
 
 @dataclass
 class UnprocessedItem:
-    """An item (file or JSON) that couldn't be matched/processed."""
-    filename: str
-    filepath: str
-    title: str = ""
-    reason: str = ""
-    processed_time: str = ""
-    output_path: Optional[str] = None  # Path after copying to Unprocessed folder
+    """A file that was copied but had no matching JSON metadata."""
+    relative_path: str  # Path relative to output root (e.g., "Album/photo.jpg")
+    reason: str         # Why it wasn't processed (e.g., "No matching JSON found")
+    source_path: str = ""  # Original source path
+
+
+@dataclass
+class MotionPhotoInfo:
+    """Information about a motion photo sidecar file."""
+    relative_path: str  # Path relative to output (e.g., "Album/photo.jpg.MP")
+    parent_image: str   # The parent image filename (e.g., "photo.jpg")
+    extension: str      # Original extension (.MP, .MP~2, etc.)
 
 
 @dataclass
@@ -158,10 +163,9 @@ class ProcessRunResult:
     Returned by PEFOrchestrator.process() and extend().
     """
     stats: ProcessingStats
-    output_dir: str
-    processed_dir: str
-    unprocessed_dir: str
-    log_file: str
+    output_dir: str           # Root output directory (source_processed/)
+    pef_dir: str              # Metadata directory (source_processed/_pef/)
+    summary_file: str         # Path to summary.txt
     elapsed_time: float
     start_time: str
     end_time: str
@@ -169,10 +173,8 @@ class ProcessRunResult:
     resumed: bool = False
     skipped_count: int = 0
     interrupted: bool = False
-
-
-# Alias for backwards compatibility
-ProcessResult = ProcessRunResult
+    motion_photo_count: int = 0
+    unprocessed_items: List[UnprocessedItem] = field(default_factory=list)
 
 # Type aliases for callbacks
 # (current_item, total_items, message) -> None

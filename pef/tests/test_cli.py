@@ -1,7 +1,7 @@
 """Tests for pef.cli.main module."""
 
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -303,7 +303,6 @@ class TestRunProcessInterrupt:
 
     def test_keyboard_interrupt_saves_progress(self, sample_takeout, temp_dir, capsys):
         """Verify KeyboardInterrupt saves progress and returns 130."""
-        from pef.core.models import ProcessResult, ProcessingStats
 
         with patch('pef.cli.main.PEFOrchestrator') as MockOrch:
             mock_orch = MagicMock()

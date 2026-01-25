@@ -186,3 +186,174 @@ def create_logger(output_dir: str, enabled: bool = True) -> Union[BufferedLogger
     if enabled:
         return BufferedLogger(output_dir)
     return NullLogger()
+
+
+class PEFLogger:
+    """New unified logger for PEF that writes to the _pef directory.
+
+    Handles all logging output:
+    - summary.txt: Concise summary (always generated)
+    - verbose.txt: Detailed log (only with --verbose)
+    - unprocessed.txt: Files without metadata
+    - motion_photos.txt: Info about motion photos
+    """
+
+    def __init__(self, pef_dir: str, verbose: bool = False):
+        """Initialize PEF logger.
+
+        Args:
+            pef_dir: The _pef directory path.
+            verbose: Whether to create verbose.txt.
+        """
+        self.pef_dir = pef_dir
+        self.verbose = verbose
+        self._verbose_logger: Optional[BufferedLogger] = None
+
+        os.makedirs(pef_dir, exist_ok=True)
+
+        if verbose:
+            self._verbose_logger = BufferedLogger(pef_dir, filename="verbose.txt")
+
+    def log(self, message: str) -> None:
+        """Log a message to verbose.txt (if verbose mode enabled).
+
+        Args:
+            message: Message to log.
+        """
+        if self._verbose_logger:
+            self._verbose_logger.log(message)
+
+    def close(self) -> None:
+        """Close any open log files."""
+        if self._verbose_logger:
+            self._verbose_logger.close()
+
+    def __enter__(self) -> "PEFLogger":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def write_summary(
+        self,
+        source_path: str,
+        output_dir: str,
+        stats: Any,  # ProcessingStats
+        elapsed_time: float,
+        start_time: str,
+        end_time: str,
+        motion_photo_count: int = 0,
+        unprocessed_count: int = 0,
+        unmatched_json_count: int = 0,
+        exiftool_available: bool = False,
+        exiftool_path: Optional[str] = None
+    ) -> str:
+        """Write concise summary.txt.
+
+        Returns:
+            Path to summary file.
+        """
+        filepath = os.path.join(self.pef_dir, "summary.txt")
+
+        # Format duration nicely
+        if elapsed_time >= 60:
+            minutes = int(elapsed_time // 60)
+            seconds = int(elapsed_time % 60)
+            duration = f"{minutes}m {seconds}s"
+        else:
+            duration = f"{elapsed_time:.1f}s"
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("Photo Export Fixer - Processing Summary\n")
+            f.write("=" * 40 + "\n\n")
+            f.write(f"Source:    {source_path}\n")
+            f.write(f"Output:    {output_dir}\n")
+            f.write(f"Started:   {start_time}\n")
+            f.write(f"Completed: {end_time}\n")
+            f.write(f"Duration:  {duration}\n\n")
+
+            f.write(f"Files Processed:     {stats.processed:,}\n")
+            f.write(f"  With GPS data:     {stats.with_gps:,}\n")
+            f.write(f"  With people tags:  {stats.with_people:,}\n")
+
+            if unprocessed_count > 0:
+                f.write(f"Files Unprocessed:   {unprocessed_count:,}  (see unprocessed.txt)\n")
+            else:
+                f.write("Files Unprocessed:   0\n")
+
+            if motion_photo_count > 0:
+                f.write(f"Motion Photos:       {motion_photo_count:,}  (see motion_photos.txt)\n")
+
+            if unmatched_json_count > 0:
+                f.write(f"Unmatched JSONs:     {unmatched_json_count:,}  (see unmatched_data/)\n")
+
+            if stats.errors > 0:
+                f.write(f"Errors:              {stats.errors:,}\n")
+
+            f.write("\n")
+            if exiftool_available:
+                path_str = exiftool_path if exiftool_path else "in PATH"
+                f.write(f"ExifTool: Available ({path_str})\n")
+            else:
+                f.write("ExifTool: Not available (metadata not written)\n")
+
+        return filepath
+
+    def write_unprocessed(
+        self,
+        items: List[Any]  # List[UnprocessedItem]
+    ) -> Optional[str]:
+        """Write unprocessed.txt with files that didn't get metadata.
+
+        Args:
+            items: List of UnprocessedItem objects.
+
+        Returns:
+            Path to file, or None if no items.
+        """
+        if not items:
+            return None
+
+        filepath = os.path.join(self.pef_dir, "unprocessed.txt")
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("# Files without metadata\n")
+            f.write("# Format: relative_path | reason\n\n")
+
+            for item in items:
+                f.write(f"{item.relative_path} | {item.reason}\n")
+
+        return filepath
+
+    def write_motion_photos(
+        self,
+        items: List[Any]  # List[MotionPhotoInfo]
+    ) -> Optional[str]:
+        """Write motion_photos.txt with info about motion photo files.
+
+        Args:
+            items: List of MotionPhotoInfo objects.
+
+        Returns:
+            Path to file, or None if no items.
+        """
+        if not items:
+            return None
+
+        filepath = os.path.join(self.pef_dir, "motion_photos.txt")
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("Motion Photos Information\n")
+            f.write("=" * 40 + "\n\n")
+            f.write("Motion Photos are short video clips captured alongside still images.\n")
+            f.write("Google Photos stores these as separate .MP files alongside the .jpg.\n\n")
+            f.write("These files have been preserved in their original locations. If you're\n")
+            f.write("importing to Immich or similar platforms, you may need to:\n")
+            f.write("- Rename .MP to .MP4 for compatibility\n")
+            f.write("- Or use the --rename-mp flag when running PEF\n\n")
+            f.write(f"Motion photo files found ({len(items)} total):\n\n")
+
+            for item in items:
+                f.write(f"{item.relative_path}\n")
+
+        return filepath

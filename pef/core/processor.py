@@ -6,20 +6,22 @@ Handles copying, date modification, and metadata writing.
 import logging
 import os
 import shutil
-import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import filedate
 
-logger = logging.getLogger(__name__)
-
-from pef.core.models import FileInfo, JsonMetadata, ProcessingStats, ProgressCallback
+from pef.core.models import FileInfo, JsonMetadata, ProcessingStats, ProgressCallback, UnprocessedItem, MotionPhotoInfo
 from pef.core.utils import checkout_dir, get_unique_path
 from pef.core.metadata import build_gps_tags, build_people_tags
 from pef.core.logger import BufferedLogger
 from pef.core.exiftool import ExifToolManager
+
+logger = logging.getLogger(__name__)
+
+# Motion photo extensions
+MOTION_PHOTO_EXTENSIONS = {".mp", ".mp~2"}
 
 
 class FileProcessor:
@@ -54,25 +56,31 @@ class FileProcessor:
         write_exif: bool = True,
         batch_size: int = DEFAULT_BATCH_SIZE,
         verbose: bool = False,
-        copy_workers: int = DEFAULT_COPY_WORKERS
+        copy_workers: int = DEFAULT_COPY_WORKERS,
+        rename_mp: bool = False
     ):
         """Initialize processor.
 
         Args:
-            output_dir: Root output directory.
+            output_dir: Root output directory. Files are copied here mirroring
+                       the source directory structure.
             logger: Optional logger for detailed logging.
             write_exif: Whether to write EXIF metadata (default True).
             batch_size: Number of files to batch for metadata writing (default 100).
             verbose: If True, log all operations. If False, only log errors/warnings.
             copy_workers: Number of parallel workers for file copying (default 4).
+            rename_mp: If True, rename .MP files to .MP4 for better compatibility.
         """
         self.output_dir = output_dir
-        self.processed_dir = os.path.join(output_dir, "Processed")
-        self.unprocessed_dir = os.path.join(output_dir, "Unprocessed")
         self.logger = logger
         self.write_exif = write_exif
         self.verbose = verbose
+        self.rename_mp = rename_mp
         self.stats = ProcessingStats()
+
+        # Track unprocessed files and motion photos
+        self.unprocessed_items: List[UnprocessedItem] = []
+        self.motion_photos: List[MotionPhotoInfo] = []
 
         self._exiftool: Optional[ExifToolManager] = None
         self._pending_writes: List[Tuple[str, Dict[str, Any]]] = []
@@ -195,6 +203,9 @@ class FileProcessor:
     ) -> str:
         """Copy a file, set its dates, and write metadata.
 
+        Files are copied to output_dir preserving album structure at root.
+        (e.g., output_dir/AlbumName/photo.jpg)
+
         Args:
             file: Source file info. Note: This object is mutated to set
                   output_path and json_path attributes.
@@ -203,8 +214,8 @@ class FileProcessor:
         Returns:
             Path to the processed file.
         """
-        # Create album directory
-        album_dir = checkout_dir(os.path.join(self.processed_dir, file.album_name))
+        # Create album directory directly under output_dir (no /Processed subdir)
+        album_dir = checkout_dir(os.path.join(self.output_dir, file.album_name))
 
         # Get unique destination path
         dest_path = get_unique_path(os.path.join(album_dir, file.filename))
@@ -284,7 +295,7 @@ class FileProcessor:
         # Prepare all destinations and tasks
         tasks = []
         for file, metadata in files_with_metadata:
-            album_dir = checkout_dir(os.path.join(self.processed_dir, file.album_name))
+            album_dir = checkout_dir(os.path.join(self.output_dir, file.album_name))
             dest_path = get_unique_path(os.path.join(album_dir, file.filename))
             tasks.append((file, metadata, dest_path))
 
@@ -358,20 +369,36 @@ class FileProcessor:
             self.stats.errors += 1
             return False
 
-    def copy_unmatched_file(self, file: FileInfo) -> str:
-        """Copy an unmatched file to Unprocessed folder.
+    def copy_unmatched_file(self, file: FileInfo, reason: str = "No matching JSON found") -> str:
+        """Copy an unmatched file preserving album structure.
+
+        Files without metadata are still copied to the output directory,
+        maintaining the same album/folder structure as processed files.
+        They are tracked in the unprocessed_items list for logging.
 
         Args:
             file: File to copy.
+            reason: Reason why this file wasn't processed.
 
         Returns:
             Path to copied file.
         """
-        # Create Unprocessed directory
-        checkout_dir(self.unprocessed_dir)
+        # Create album directory under output_dir (same structure as processed)
+        album_dir = checkout_dir(os.path.join(self.output_dir, file.album_name))
+
+        # Check if this is a motion photo sidecar
+        ext_lower = os.path.splitext(file.filename)[1].lower()
+        is_motion_photo = ext_lower in MOTION_PHOTO_EXTENSIONS
+
+        # Determine destination filename (optionally rename .MP to .MP4)
+        dest_filename = file.filename
+        if is_motion_photo and self.rename_mp:
+            # Rename .MP or .MP~2 to .MP4
+            base = os.path.splitext(file.filename)[0]
+            dest_filename = base + ".MP4"
 
         # Get unique destination path
-        dest_path = get_unique_path(os.path.join(self.unprocessed_dir, file.filename))
+        dest_path = get_unique_path(os.path.join(album_dir, dest_filename))
 
         # Copy file
         if self.logger and self.verbose:
@@ -381,6 +408,29 @@ class FileProcessor:
         file.output_path = dest_path
         self.stats.unmatched_files += 1
 
+        # Track this as unprocessed
+        relative_path = os.path.join(file.album_name, dest_filename)
+        self.unprocessed_items.append(UnprocessedItem(
+            relative_path=relative_path,
+            reason=reason,
+            source_path=file.filepath
+        ))
+
+        # Track motion photos separately
+        if is_motion_photo:
+            # Try to find the parent image name (e.g., photo.jpg from photo.jpg.MP)
+            parent_image = file.filename
+            if parent_image.lower().endswith(".mp"):
+                parent_image = parent_image[:-3]  # Remove .MP
+            elif parent_image.lower().endswith(".mp~2"):
+                parent_image = parent_image[:-5]  # Remove .MP~2
+
+            self.motion_photos.append(MotionPhotoInfo(
+                relative_path=relative_path,
+                parent_image=parent_image,
+                extension=ext_lower
+            ))
+
         return dest_path
 
     def copy_unmatched_files(
@@ -388,7 +438,7 @@ class FileProcessor:
         files: List[FileInfo],
         on_progress: Optional[ProgressCallback] = None
     ) -> List[FileInfo]:
-        """Copy all unmatched files to Unprocessed folder.
+        """Copy all unmatched files preserving album structure.
 
         Args:
             files: List of unmatched files.
@@ -400,72 +450,16 @@ class FileProcessor:
         total = len(files)
 
         for i, file in enumerate(files):
-            self.copy_unmatched_file(file)
+            # Determine reason based on file type
+            ext_lower = os.path.splitext(file.filename)[1].lower()
+            if ext_lower in MOTION_PHOTO_EXTENSIONS:
+                reason = f"Motion photo sidecar (parent: {file.filename.rsplit('.', 1)[0]})"
+            else:
+                reason = "No matching JSON found"
+
+            self.copy_unmatched_file(file, reason=reason)
 
             if on_progress:
                 on_progress(i + 1, total, f"Copying: {file.filename}")
 
         return files
-
-
-# Backwards-compatible function (deprecated)
-def copy_modify(
-    file: dict,
-    date: datetime,
-    copyto: str,
-    geo_data: Optional[Dict[str, Any]] = None,
-    people: Optional[List[Dict[str, Any]]] = None,
-    exiftool_helper: Optional[Any] = None
-) -> str:
-    """Copy and modify a file (backwards compatible).
-
-    .. deprecated::
-        Use FileProcessor.process_file() instead.
-
-    Args:
-        file: Dict with filename, filepath, albumname keys.
-        date: Date to set on file.
-        copyto: Destination directory.
-        geo_data: Optional Google geoData dict.
-        people: Optional Google people list.
-        exiftool_helper: Optional ExifToolHelper instance.
-
-    Returns:
-        Path to copied file.
-    """
-    warnings.warn(
-        "copy_modify() is deprecated. Use FileProcessor.process_file() instead.",
-        DeprecationWarning,
-        stacklevel=2
-    )
-    from pef.core.metadata import build_gps_tags_from_dict, build_people_tags_from_list
-
-    # Create album directory (support both old and new attribute names)
-    album_name = file.get("album_name") or file.get("albumname")
-    album_dir = checkout_dir(os.path.join(copyto, album_name))
-
-    # Get unique destination path
-    dest_path = get_unique_path(os.path.join(album_dir, file["filename"]))
-
-    # Copy file
-    shutil.copy(file["filepath"], dest_path)
-
-    # Set file dates
-    try:
-        filedate.File(dest_path).set(created=date, modified=date)
-    except Exception:
-        pass  # Continue processing even if date setting fails
-
-    # Write EXIF metadata
-    if exiftool_helper:
-        tags = {}
-        tags.update(build_gps_tags_from_dict(geo_data))
-        tags.update(build_people_tags_from_list(people))
-
-        if tags:
-            try:
-                exiftool_helper.set_tags(dest_path, tags)
-            except Exception as e:
-                logger.warning(f"Failed to write EXIF to {dest_path}: {e}")
-
-    return dest_path

@@ -190,7 +190,11 @@ class ExifToolManager:
             return False
 
         try:
-            self._helper = exiftool.ExifToolHelper(executable=self._exiftool_path)
+            # Use -overwrite_original to prevent creation of backup files
+            self._helper = exiftool.ExifToolHelper(
+                executable=self._exiftool_path,
+                common_args=["-overwrite_original"]
+            )
             self._helper.run()
             return True
         except Exception as e:

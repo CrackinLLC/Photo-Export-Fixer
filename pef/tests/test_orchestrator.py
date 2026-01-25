@@ -2,14 +2,12 @@
 
 import os
 import json
-import time
-from datetime import datetime
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 import pytest
 
 from pef.core.orchestrator import PEFOrchestrator, _adaptive_interval
-from pef.core.models import DryRunResult, ProcessResult, ProcessingStats
+from pef.core.models import DryRunResult, ProcessRunResult, ProcessingStats
 
 
 class TestAdaptiveInterval:
@@ -50,7 +48,7 @@ class TestPEFOrchestratorInit:
 
     def test_default_dest_path(self):
         orchestrator = PEFOrchestrator("/source/path")
-        assert orchestrator.dest_path == "/source/path_pefProcessed"
+        assert orchestrator.dest_path == "/source/path_processed"
 
     def test_custom_dest_path(self):
         orchestrator = PEFOrchestrator("/source", dest_path="/custom/output")
@@ -157,7 +155,7 @@ class TestPEFOrchestratorProcess:
 
         result = orchestrator.process()
 
-        assert isinstance(result, ProcessResult)
+        assert isinstance(result, ProcessRunResult)
         assert len(result.errors) > 0
         assert "does not exist" in result.errors[0]
 
@@ -172,7 +170,7 @@ class TestPEFOrchestratorProcess:
 
         assert os.path.exists(output_dir) or result.output_dir is not None
 
-    def test_creates_processed_subdir(self, sample_takeout, temp_dir):
+    def test_creates_pef_subdir(self, sample_takeout, temp_dir):
         output_dir = os.path.join(temp_dir, "output")
 
         with patch('pef.core.processor.filedate'):
@@ -184,7 +182,7 @@ class TestPEFOrchestratorProcess:
                 )
                 result = orchestrator.process()
 
-        assert "Processed" in result.processed_dir
+        assert "_pef" in result.pef_dir
 
     def test_returns_processing_stats(self, sample_takeout, temp_dir):
         output_dir = os.path.join(temp_dir, "output")
@@ -242,7 +240,7 @@ class TestPEFOrchestratorResume:
                 orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
                 orchestrator.process()
 
-        state_path = os.path.join(output_dir, "processing_state.json")
+        state_path = os.path.join(output_dir, "_pef", "processing_state.json")
         assert os.path.exists(state_path)
 
         with open(state_path, "r") as f:
@@ -271,7 +269,7 @@ class TestPEFOrchestratorResume:
             "processed_count": 3,
             "processed_jsons": all_jsons
         }
-        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+        with open(os.path.join(output_dir, "_pef", "processing_state.json"), "w") as f:
             json.dump(state_data, f)
 
         with patch('pef.core.processor.ExifToolManager'):
@@ -281,7 +279,7 @@ class TestPEFOrchestratorResume:
 
         # Should complete without processing any JSONs (all already done)
         assert result.stats.processed == 0  # No new files processed
-        assert os.path.exists(os.path.join(output_dir, "processing_state.json"))
+        assert os.path.exists(os.path.join(output_dir, "_pef", "processing_state.json"))
 
     def test_process_resumes_partial(self, sample_takeout, temp_dir):
         """Verify processing resumes and only processes remaining files."""
@@ -299,7 +297,7 @@ class TestPEFOrchestratorResume:
             "processed_count": 1,
             "processed_jsons": [os.path.join(sample_takeout, "Album1", "photo1.jpg.json")]
         }
-        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+        with open(os.path.join(output_dir, "_pef", "processing_state.json"), "w") as f:
             json.dump(state_data, f)
 
         with patch('pef.core.processor.ExifToolManager'):
@@ -311,7 +309,7 @@ class TestPEFOrchestratorResume:
         # photo2.jpg.json -> photo2.jpg (1 file)
         # image.png.json -> image.png (1 file)
         assert result.stats.processed == 2  # 2 new files processed
-        assert os.path.exists(os.path.join(output_dir, "processing_state.json"))
+        assert os.path.exists(os.path.join(output_dir, "_pef", "processing_state.json"))
 
     def test_process_force_ignores_state(self, sample_takeout, temp_dir):
         """Verify force=True ignores existing state."""
@@ -334,7 +332,7 @@ class TestPEFOrchestratorResume:
             "processed_count": 3,
             "processed_jsons": all_jsons
         }
-        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+        with open(os.path.join(output_dir, "_pef", "processing_state.json"), "w") as f:
             json.dump(state_data, f)
 
         with patch('pef.core.processor.ExifToolManager'):
@@ -358,7 +356,7 @@ class TestPEFOrchestratorResume:
             "status": "completed",
             "processed_jsons": []
         }
-        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+        with open(os.path.join(output_dir, "_pef", "processing_state.json"), "w") as f:
             json.dump(state_data, f)
 
         with patch('pef.core.processor.ExifToolManager'):
@@ -609,7 +607,7 @@ class TestPEFOrchestratorSaveProgress:
 
 
 class TestPEFOrchestratorResumeFields:
-    """Tests for ProcessResult resume-related fields."""
+    """Tests for ProcessRunResult resume-related fields."""
 
     def test_fresh_run_not_resumed(self, sample_takeout, temp_dir):
         """Verify fresh run has resumed=False and skipped_count=0."""
@@ -639,7 +637,7 @@ class TestPEFOrchestratorResumeFields:
             "processed_count": 1,
             "processed_jsons": [os.path.join(sample_takeout, "Album1", "photo1.jpg.json")]
         }
-        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+        with open(os.path.join(output_dir, "_pef", "processing_state.json"), "w") as f:
             json.dump(state_data, f)
 
         with patch('pef.core.processor.ExifToolManager'):
@@ -662,7 +660,7 @@ class TestPEFOrchestratorResumeFields:
             "status": "in_progress",
             "processed_jsons": [os.path.join(sample_takeout, "Album1", "photo1.jpg.json")]
         }
-        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+        with open(os.path.join(output_dir, "_pef", "processing_state.json"), "w") as f:
             json.dump(state_data, f)
 
         with patch('pef.core.processor.ExifToolManager'):

@@ -1,14 +1,13 @@
 """Tests for pef.core.processor module."""
 
 import os
-import warnings
 from datetime import datetime
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 
 import pytest
 
-from pef.core.processor import FileProcessor, copy_modify
-from pef.core.models import FileInfo, JsonMetadata, GeoData, Person, ProcessingStats
+from pef.core.processor import FileProcessor
+from pef.core.models import FileInfo, JsonMetadata, GeoData, Person
 
 
 class TestFileProcessor:
@@ -40,19 +39,12 @@ class TestFileProcessor:
             people=[Person("Alice"), Person("Bob")]
         )
 
-    def test_creates_processed_dir(self, output_dir, sample_file, sample_metadata):
-        with patch('pef.core.processor.filedate'):
-            with FileProcessor(output_dir, write_exif=False) as processor:
-                processor.process_file(sample_file, sample_metadata)
-
-        assert os.path.exists(os.path.join(output_dir, "Processed"))
-
     def test_creates_album_subdir(self, output_dir, sample_file, sample_metadata):
         with patch('pef.core.processor.filedate'):
             with FileProcessor(output_dir, write_exif=False) as processor:
                 processor.process_file(sample_file, sample_metadata)
 
-        assert os.path.exists(os.path.join(output_dir, "Processed", "Album1"))
+        assert os.path.exists(os.path.join(output_dir, "Album1"))
 
     def test_copies_file(self, output_dir, sample_file, sample_metadata):
         with patch('pef.core.processor.filedate'):
@@ -82,7 +74,8 @@ class TestFileProcessor:
             dest = processor.copy_unmatched_file(sample_file)
 
         assert os.path.exists(dest)
-        assert "Unprocessed" in dest
+        # Unprocessed files now go to same album structure as processed files
+        assert "Album1" in dest
         assert processor.stats.unmatched_files == 1
 
     def test_unique_path_on_collision(self, output_dir, sample_file, sample_metadata):
@@ -103,66 +96,10 @@ class TestFileProcessor:
             mock_instance = MagicMock()
             MockManager.return_value = mock_instance
 
-            with FileProcessor(output_dir, write_exif=True) as processor:
+            with FileProcessor(output_dir, write_exif=True):
                 pass
 
             mock_instance.stop.assert_called_once()
-
-
-class TestCopyModify:
-    """Tests for copy_modify() backwards-compatible function."""
-
-    @pytest.fixture
-    def source_file(self, temp_dir):
-        """Create a source file."""
-        album = os.path.join(temp_dir, "Album1")
-        os.makedirs(album)
-        filepath = os.path.join(album, "photo.jpg")
-        with open(filepath, "wb") as f:
-            f.write(b"fake data")
-        return {
-            "filename": "photo.jpg",
-            "filepath": filepath,
-            "albumname": "Album1"
-        }
-
-    @pytest.fixture
-    def output_dir(self, temp_dir):
-        return os.path.join(temp_dir, "output")
-
-    def test_emits_deprecation_warning(self, source_file, output_dir):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            with patch('pef.core.processor.filedate'):
-                copy_modify(source_file, datetime.now(), output_dir)
-
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-
-    def test_copies_file(self, source_file, output_dir):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            with patch('pef.core.processor.filedate'):
-                dest = copy_modify(source_file, datetime.now(), output_dir)
-
-        assert os.path.exists(dest)
-
-    def test_creates_album_dir(self, source_file, output_dir):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            with patch('pef.core.processor.filedate'):
-                copy_modify(source_file, datetime.now(), output_dir)
-
-        assert os.path.exists(os.path.join(output_dir, "Album1"))
-
-    def test_returns_dest_path(self, source_file, output_dir):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            with patch('pef.core.processor.filedate'):
-                dest = copy_modify(source_file, datetime.now(), output_dir)
-
-        assert dest.endswith("photo.jpg")
-        assert "Album1" in dest
 
 
 class TestFileProcessorStats:
@@ -253,15 +190,16 @@ class TestCopyUnmatchedFiles:
         assert len(calls) == 3
         assert calls[-1][0] == 3  # Final current == total
 
-    def test_files_go_to_unprocessed_folder(self, temp_dir, source_files):
-        """Verify files are copied to Unprocessed folder."""
+    def test_files_go_to_album_folder(self, temp_dir, source_files):
+        """Verify files are copied to album folder (same as processed files)."""
         output_dir = os.path.join(temp_dir, "output")
 
         with FileProcessor(output_dir, write_exif=False) as processor:
             result = processor.copy_unmatched_files(source_files)
 
         for f in result:
-            assert "Unprocessed" in f.output_path
+            # Files now go to same album structure as processed files
+            assert "Album" in f.output_path
 
 
 class TestFileProcessorErrorHandling:

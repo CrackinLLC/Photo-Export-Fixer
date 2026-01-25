@@ -41,19 +41,6 @@ def build_gps_tags(geo_data: Optional[GeoData]) -> Dict[str, Any]:
     }
 
 
-def build_gps_tags_from_dict(geo_dict: Optional[Dict]) -> Dict[str, Any]:
-    """Convert Google's geoData dict to ExifTool tags (backwards compatible).
-
-    Args:
-        geo_dict: Google's geoData dict with latitude/longitude/altitude keys.
-
-    Returns:
-        Dict of ExifTool tags.
-    """
-    geo_data = GeoData.from_dict(geo_dict)
-    return build_gps_tags(geo_data)
-
-
 def build_people_tags(people: List[Person]) -> Dict[str, Any]:
     """Convert people list to ExifTool tag dictionary.
 
@@ -89,19 +76,6 @@ def build_people_tags(people: List[Person]) -> Dict[str, Any]:
         "Subject": names,                 # XMP-dc subject
         "XPKeywords": ";".join(names),   # Windows (semicolon-separated)
     }
-
-
-def build_people_tags_from_list(people_list: Optional[List[Dict]]) -> Dict[str, Any]:
-    """Convert Google's people array to ExifTool tags (backwards compatible).
-
-    Args:
-        people_list: Google's people array with name dicts.
-
-    Returns:
-        Dict of ExifTool tags.
-    """
-    people = Person.from_list(people_list)
-    return build_people_tags(people)
 
 
 def build_all_tags(

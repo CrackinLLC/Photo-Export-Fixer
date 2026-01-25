@@ -3,7 +3,6 @@
 import json
 import os
 
-import pytest
 
 from pef.core.state import StateManager
 
