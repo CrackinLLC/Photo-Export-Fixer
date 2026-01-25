@@ -13,11 +13,11 @@ class FileInfo:
     """
     filename: str
     filepath: str
-    albumname: str
+    album_name: str
 
     # Populated during processing
-    procpath: Optional[str] = None
-    jsonpath: Optional[str] = None
+    output_path: Optional[str] = None
+    json_path: Optional[str] = None
     processed_time: Optional[str] = None
 
 
@@ -94,7 +94,7 @@ class UnprocessedItem:
     title: str = ""
     reason: str = ""
     processed_time: str = ""
-    procpath: Optional[str] = None  # Path after copying to Unprocessed folder
+    output_path: Optional[str] = None  # Path after copying to Unprocessed folder
 
 
 @dataclass
@@ -113,16 +113,6 @@ class ProcessingStats:
 
 
 @dataclass
-class ProcessingResult:
-    """Result from processing a batch of files."""
-    stats: ProcessingStats
-    processed_files: List[FileInfo] = field(default_factory=list)
-    unprocessed_files: List[UnprocessedItem] = field(default_factory=list)
-    unprocessed_jsons: List[UnprocessedItem] = field(default_factory=list)
-    errors: List[Dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
 class DryRunResult:
     """Results from a dry-run analysis."""
     json_count: int = 0
@@ -138,8 +128,12 @@ class DryRunResult:
 
 
 @dataclass
-class ProcessResult:
-    """Results from a processing run."""
+class ProcessRunResult:
+    """Results from a full processing run.
+
+    Contains output paths, timing information, and statistics.
+    Returned by PEFOrchestrator.process() and extend().
+    """
     stats: ProcessingStats
     output_dir: str
     processed_dir: str
@@ -151,9 +145,12 @@ class ProcessResult:
     errors: List[str] = field(default_factory=list)
 
 
+# Alias for backwards compatibility
+ProcessResult = ProcessRunResult
+
 # Type aliases for callbacks
 # (current_item, total_items, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
 
-# File index type: (albumname, filename) -> list of FileInfo
+# File index type: (album_name, filename) -> list of FileInfo
 FileIndex = Dict[Tuple[str, str], List[FileInfo]]

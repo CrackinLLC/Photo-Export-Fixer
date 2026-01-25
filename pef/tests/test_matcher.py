@@ -11,19 +11,19 @@ class TestParsedTitle:
     """Tests for ParsedTitle dataclass."""
 
     def test_build_filename_simple(self):
-        pt = ParsedTitle(name="photo", extension=".jpg", brackets=None)
+        pt = ParsedTitle(name="photo", extension=".jpg", duplicate_suffix=None)
         assert pt.build_filename() == "photo.jpg"
 
     def test_build_filename_with_suffix(self):
-        pt = ParsedTitle(name="photo", extension=".jpg", brackets=None)
+        pt = ParsedTitle(name="photo", extension=".jpg", duplicate_suffix=None)
         assert pt.build_filename("-edited") == "photo-edited.jpg"
 
     def test_build_filename_with_brackets(self):
-        pt = ParsedTitle(name="photo", extension=".jpg", brackets="(1)")
+        pt = ParsedTitle(name="photo", extension=".jpg", duplicate_suffix="(1)")
         assert pt.build_filename() == "photo(1).jpg"
 
     def test_build_filename_with_suffix_and_brackets(self):
-        pt = ParsedTitle(name="photo", extension=".jpg", brackets="(1)")
+        pt = ParsedTitle(name="photo", extension=".jpg", duplicate_suffix="(1)")
         assert pt.build_filename("-edited") == "photo-edited(1).jpg"
 
 
@@ -51,7 +51,7 @@ class TestFileMatcher:
 
         assert result.name == "photo"
         assert result.extension == ".jpg"
-        assert result.brackets is None
+        assert result.duplicate_suffix is None
 
     def test_parse_title_long_name(self, simple_index):
         matcher = FileMatcher(simple_index)
@@ -64,7 +64,7 @@ class TestFileMatcher:
         matcher = FileMatcher(simple_index)
         result = matcher.parse_title("photo.jpg", "/Album1/photo.jpg(1).json")
 
-        assert result.brackets == "(1)"
+        assert result.duplicate_suffix == "(1)"
 
     def test_find_match_exact(self, simple_index):
         matcher = FileMatcher(simple_index)

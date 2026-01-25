@@ -217,6 +217,10 @@ class PEFOrchestrator:
                     if on_progress and i % 100 == 0:
                         on_progress(i, total, f"Processing: {os.path.basename(json_path)}")
 
+                    # Periodic flush of batched metadata writes for progress visibility
+                    if i > 0 and i % 500 == 0:
+                        processor.flush_metadata_writes()
+
                     metadata = self._read_json(json_path)
                     if not metadata:
                         unprocessed_jsons.append({
@@ -237,8 +241,8 @@ class PEFOrchestrator:
                                 processed_files.append({
                                     "filename": file_info.filename,
                                     "filepath": file_info.filepath,
-                                    "procpath": dest,
-                                    "jsonpath": json_path,
+                                    "output_path": dest,
+                                    "json_path": json_path,
                                     "time": time.strftime("%Y-%m-%d %H:%M:%S")
                                 })
                                 any_success = True
@@ -272,11 +276,11 @@ class PEFOrchestrator:
                     if on_progress and i % 100 == 0:
                         on_progress(i, len(unmatched_files), f"Copying: {file_info.filename}")
 
-                    dest = processor.process_unmatched_file(file_info)
+                    dest = processor.copy_unmatched_file(file_info)
                     unprocessed_file_records.append({
                         "filename": file_info.filename,
                         "filepath": file_info.filepath,
-                        "procpath": dest
+                        "output_path": dest
                     })
 
                 result.stats = processor.stats

@@ -40,7 +40,7 @@ class ParsedTitle:
     """Parsed components of a file title from JSON metadata."""
     name: str           # Base filename without extension
     extension: str      # File extension including dot
-    brackets: Optional[str]  # Duplicate suffix like "(1)" or None
+    duplicate_suffix: Optional[str]  # Duplicate marker like "(1)" or None
 
     def build_filename(self, suffix: str = "") -> str:
         """Build a filename with optional suffix.
@@ -51,8 +51,8 @@ class ParsedTitle:
         Returns:
             Complete filename like "photo-edited(1).jpg".
         """
-        if self.brackets:
-            return f"{self.name}{suffix}{self.brackets}{self.extension}"
+        if self.duplicate_suffix:
+            return f"{self.name}{suffix}{self.duplicate_suffix}{self.extension}"
         return f"{self.name}{suffix}{self.extension}"
 
 
@@ -105,13 +105,13 @@ class FileMatcher:
 
         # Detect duplicate naming convention from JSON path
         # e.g., "photo.jpg(1).json" means the file is "photo(1).jpg"
-        brackets = None
+        duplicate_suffix = None
         if json_path.endswith(").json"):
             match = self.BRACKET_PATTERN.search(json_path)
             if match:
-                brackets = f"({match.group(1)})"
+                duplicate_suffix = f"({match.group(1)})"
 
-        return ParsedTitle(name=name, extension=ext, brackets=brackets)
+        return ParsedTitle(name=name, extension=ext, duplicate_suffix=duplicate_suffix)
 
     def find_match(
         self,

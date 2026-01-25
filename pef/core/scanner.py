@@ -102,7 +102,7 @@ class FileScanner:
                     file_info = FileInfo(
                         filename=filename,
                         filepath=filepath,
-                        albumname=album_name
+                        album_name=album_name
                     )
                     self.files.append(file_info)
 
@@ -124,7 +124,7 @@ class FileScanner:
         """Build the file index for fast lookups."""
         self.file_index = {}
         for file_info in self.files:
-            key = (file_info.albumname, file_info.filename)
+            key = (file_info.album_name, file_info.filename)
             if key not in self.file_index:
                 self.file_index[key] = []
             self.file_index[key].append(file_info)
@@ -150,24 +150,24 @@ class FileScanner:
         Returns:
             Dict with json_count, file_count, album_count keys.
         """
-        albums = set(f.albumname for f in self.files)
+        albums = set(f.album_name for f in self.files)
         return {
             "json_count": self.json_count,
             "file_count": self.file_count,
             "album_count": len(albums),
         }
 
-    def lookup(self, albumname: str, filename: str) -> List[FileInfo]:
+    def lookup(self, album_name: str, filename: str) -> List[FileInfo]:
         """Look up files by album and filename.
 
         Args:
-            albumname: Album (folder) name.
+            album_name: Album (folder) name.
             filename: File name.
 
         Returns:
             List of matching FileInfo objects (may be empty).
         """
-        return self.file_index.get((albumname, filename), [])
+        return self.file_index.get((album_name, filename), [])
 
 
 def scan_directory(
@@ -216,7 +216,7 @@ def get_file_names(path: str) -> Tuple[List[str], List[Dict], Dict]:
         {
             "filename": f.filename,
             "filepath": f.filepath,
-            "albumname": f.albumname,
+            "album_name": f.album_name,
         }
         for f in scanner.files
     ]
@@ -228,7 +228,7 @@ def get_file_names(path: str) -> Tuple[List[str], List[Dict], Dict]:
             {
                 "filename": f.filename,
                 "filepath": f.filepath,
-                "albumname": f.albumname,
+                "album_name": f.album_name,
             }
             for f in file_list
         ]

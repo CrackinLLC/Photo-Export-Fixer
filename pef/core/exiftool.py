@@ -7,7 +7,7 @@ import logging
 import os
 import shutil
 import sys
-from typing import Optional
+from typing import Optional, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +248,69 @@ class ExifToolManager:
         except Exception as e:
             logger.debug(f"Failed to read tags from {filepath}: {e}")
             return {}
+
+    def write_tags_batch(
+        self,
+        file_tags_pairs: List[Tuple[str, dict]]
+    ) -> List[bool]:
+        """Write tags to multiple files efficiently.
+
+        Processes files in a batch to reduce ExifTool invocation overhead.
+        Each file can have different tags.
+
+        Args:
+            file_tags_pairs: List of (filepath, tags_dict) tuples.
+
+        Returns:
+            List of success booleans, one per file in same order.
+        """
+        if not self._helper or not file_tags_pairs:
+            return [False] * len(file_tags_pairs) if file_tags_pairs else []
+
+        results = []
+        for filepath, tags in file_tags_pairs:
+            if not tags:
+                results.append(True)  # No tags to write = success
+                continue
+            try:
+                self._helper.set_tags(filepath, tags)
+                results.append(True)
+            except Exception as e:
+                logger.debug(f"Batch write failed for {filepath}: {e}")
+                results.append(False)
+
+        return results
+
+    def read_tags_batch(
+        self,
+        filepaths: List[str],
+        tags: Optional[List[str]] = None
+    ) -> List[dict]:
+        """Read tags from multiple files efficiently.
+
+        Uses pyexiftool's native batch support for better performance.
+
+        Args:
+            filepaths: List of file paths to read.
+            tags: Optional list of specific tags to read.
+
+        Returns:
+            List of tag dicts, one per file in same order.
+            Empty dict for files that failed to read.
+        """
+        if not self._helper or not filepaths:
+            return [{} for _ in filepaths] if filepaths else []
+
+        try:
+            if tags:
+                # pyexiftool's get_tags accepts a list of files
+                results = self._helper.get_tags(filepaths, tags)
+            else:
+                results = self._helper.get_metadata(filepaths)
+            return results if results else [{} for _ in filepaths]
+        except Exception as e:
+            logger.debug(f"Batch read failed: {e}")
+            return [{} for _ in filepaths]
 
     @property
     def is_running(self) -> bool:

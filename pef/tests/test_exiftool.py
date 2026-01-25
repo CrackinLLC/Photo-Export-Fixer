@@ -270,3 +270,142 @@ class TestExifToolManagerWithMockedExiftool:
                 result = manager.read_tags("/path/file.jpg", ["GPSLatitude"])
 
                 assert result == {"GPSLatitude": 40.7}
+
+
+class TestExifToolManagerBatchOperations:
+    """Tests for batch operations in ExifToolManager."""
+
+    @pytest.fixture
+    def mock_exiftool_module(self):
+        """Create a mock exiftool module."""
+        mock_module = MagicMock()
+        mock_helper = MagicMock()
+        mock_module.ExifToolHelper.return_value = mock_helper
+        return mock_module, mock_helper
+
+    def test_write_tags_batch_success(self, mock_exiftool_module):
+        mock_module, mock_helper = mock_exiftool_module
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                manager.start()
+
+                file_tags_pairs = [
+                    ("/path/file1.jpg", {"GPSLatitude": 40.7}),
+                    ("/path/file2.jpg", {"GPSLatitude": 41.0}),
+                ]
+                results = manager.write_tags_batch(file_tags_pairs)
+
+                assert results == [True, True]
+                assert mock_helper.set_tags.call_count == 2
+
+    def test_write_tags_batch_partial_failure(self, mock_exiftool_module):
+        mock_module, mock_helper = mock_exiftool_module
+        # First call succeeds, second fails
+        mock_helper.set_tags.side_effect = [None, Exception("Write failed")]
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                manager.start()
+
+                file_tags_pairs = [
+                    ("/path/file1.jpg", {"GPSLatitude": 40.7}),
+                    ("/path/file2.jpg", {"GPSLatitude": 41.0}),
+                ]
+                results = manager.write_tags_batch(file_tags_pairs)
+
+                assert results == [True, False]
+
+    def test_write_tags_batch_empty_tags_skipped(self, mock_exiftool_module):
+        mock_module, mock_helper = mock_exiftool_module
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                manager.start()
+
+                file_tags_pairs = [
+                    ("/path/file1.jpg", {"GPSLatitude": 40.7}),
+                    ("/path/file2.jpg", {}),  # Empty tags
+                ]
+                results = manager.write_tags_batch(file_tags_pairs)
+
+                assert results == [True, True]  # Empty tags = success (nothing to do)
+                assert mock_helper.set_tags.call_count == 1  # Only called for first file
+
+    def test_write_tags_batch_returns_empty_when_not_running(self):
+        manager = ExifToolManager()
+        # Not started
+
+        results = manager.write_tags_batch([("/path/file.jpg", {"GPSLatitude": 40.7})])
+
+        assert results == [False]
+
+    def test_write_tags_batch_empty_list(self, mock_exiftool_module):
+        mock_module, mock_helper = mock_exiftool_module
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                manager.start()
+
+                results = manager.write_tags_batch([])
+
+                assert results == []
+
+    def test_read_tags_batch_success(self, mock_exiftool_module):
+        mock_module, mock_helper = mock_exiftool_module
+        mock_helper.get_tags.return_value = [
+            {"GPSLatitude": 40.7},
+            {"GPSLatitude": 41.0}
+        ]
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                manager.start()
+
+                results = manager.read_tags_batch(
+                    ["/path/file1.jpg", "/path/file2.jpg"],
+                    ["GPSLatitude"]
+                )
+
+                assert len(results) == 2
+                assert results[0]["GPSLatitude"] == 40.7
+                assert results[1]["GPSLatitude"] == 41.0
+
+    def test_read_tags_batch_returns_empty_when_not_running(self):
+        manager = ExifToolManager()
+
+        results = manager.read_tags_batch(["/path/file.jpg"])
+
+        assert results == [{}]
+
+    def test_read_tags_batch_handles_error(self, mock_exiftool_module):
+        mock_module, mock_helper = mock_exiftool_module
+        # Mock both get_tags and get_metadata since code path depends on tags parameter
+        mock_helper.get_tags.side_effect = Exception("Read failed")
+        mock_helper.get_metadata.side_effect = Exception("Read failed")
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                manager.start()
+
+                results = manager.read_tags_batch(["/path/file1.jpg", "/path/file2.jpg"])
+
+                assert results == [{}, {}]

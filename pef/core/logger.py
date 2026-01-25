@@ -117,8 +117,8 @@ class SummaryLogger:
                 for file in processed:
                     f.write(f"    {file.get('filename', 'unknown')}:\n")
                     f.write(f"        original file:     {file.get('filepath', '')}\n")
-                    f.write(f"        destination file:  {file.get('procpath', '')}\n")
-                    f.write(f"        source json:       {file.get('jsonpath', '')}\n")
+                    f.write(f"        destination file:  {file.get('output_path') or file.get('procpath', '')}\n")
+                    f.write(f"        source json:       {file.get('json_path') or file.get('jsonpath', '')}\n")
                     f.write(f"    time processed:        {file.get('time', '')}\n\n")
 
             # Unprocessed JSONs section
@@ -136,7 +136,7 @@ class SummaryLogger:
                 for file in unprocessed:
                     f.write(f"    {file.get('filename', 'unknown')}:\n")
                     f.write(f"        original file:     {file.get('filepath', '')}\n")
-                    f.write(f"        copied file:       {file.get('procpath', '')}\n")
+                    f.write(f"        copied file:       {file.get('output_path') or file.get('procpath', '')}\n")
                     f.write("        json-based search have not reached this file\n\n")
 
             # Summary statistics

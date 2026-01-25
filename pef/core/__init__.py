@@ -7,7 +7,9 @@ from pef.core.models import (
     JsonMetadata,
     UnprocessedItem,
     ProcessingStats,
-    ProcessingResult,
+    ProcessRunResult,
+    DryRunResult,
+    ProcessResult,
     ProgressCallback,
     FileIndex,
 )
@@ -62,8 +64,6 @@ from pef.core.processor import (
 
 from pef.core.orchestrator import (
     PEFOrchestrator,
-    DryRunResult,
-    ProcessResult,
 )
 
 __all__ = [
@@ -74,7 +74,9 @@ __all__ = [
     "JsonMetadata",
     "UnprocessedItem",
     "ProcessingStats",
-    "ProcessingResult",
+    "ProcessRunResult",
+    "DryRunResult",
+    "ProcessResult",
     "ProgressCallback",
     "FileIndex",
     # Utils

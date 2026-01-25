@@ -11,7 +11,6 @@ from pef.core.models import (
     JsonMetadata,
     ProcessingStats,
     UnprocessedItem,
-    ProcessingResult,
     DryRunResult,
     ProcessResult,
 )
@@ -124,20 +123,20 @@ class TestFileInfo:
         fi = FileInfo(
             filename="photo.jpg",
             filepath="/path/to/photo.jpg",
-            albumname="Album"
+            album_name="Album"
         )
         assert fi.filename == "photo.jpg"
         assert fi.filepath == "/path/to/photo.jpg"
-        assert fi.albumname == "Album"
+        assert fi.album_name == "Album"
 
     def test_optional_fields(self):
         fi = FileInfo(
             filename="photo.jpg",
             filepath="/path/to/photo.jpg",
-            albumname="Album"
+            album_name="Album"
         )
-        assert fi.procpath is None
-        assert fi.jsonpath is None
+        assert fi.output_path is None
+        assert fi.json_path is None
 
 
 class TestUnprocessedItem:
@@ -160,33 +159,11 @@ class TestUnprocessedItem:
             title="Original Photo",
             reason="No matching JSON",
             processed_time="2021-01-01 12:00:00",
-            procpath="/output/photo.jpg"
+            output_path="/output/photo.jpg"
         )
         assert item.title == "Original Photo"
         assert item.reason == "No matching JSON"
-        assert item.procpath == "/output/photo.jpg"
-
-
-class TestProcessingResult:
-    """Tests for ProcessingResult dataclass."""
-
-    def test_basic_creation(self):
-        stats = ProcessingStats(processed=5, errors=1)
-        result = ProcessingResult(stats=stats)
-
-        assert result.stats.processed == 5
-        assert result.stats.errors == 1
-        assert result.processed_files == []
-        assert result.unprocessed_files == []
-
-    def test_with_files(self):
-        stats = ProcessingStats(processed=2)
-        fi = FileInfo("photo.jpg", "/path/photo.jpg", "Album")
-        result = ProcessingResult(
-            stats=stats,
-            processed_files=[fi]
-        )
-        assert len(result.processed_files) == 1
+        assert item.output_path == "/output/photo.jpg"
 
 
 class TestDryRunResult:
