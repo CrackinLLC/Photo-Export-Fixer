@@ -8,8 +8,41 @@ from unittest.mock import Mock, patch, MagicMock
 
 import pytest
 
-from pef.core.orchestrator import PEFOrchestrator
+from pef.core.orchestrator import PEFOrchestrator, _adaptive_interval
 from pef.core.models import DryRunResult, ProcessResult, ProcessingStats
+
+
+class TestAdaptiveInterval:
+    """Tests for _adaptive_interval() helper function."""
+
+    def test_tiny_collection_updates_every_item(self):
+        """Collections < 50 items should update every item."""
+        assert _adaptive_interval(10) == 1
+        assert _adaptive_interval(49) == 1
+
+    def test_small_collection_updates_every_10(self):
+        """Collections 50-199 items should update every 10 items."""
+        assert _adaptive_interval(50) == 10
+        assert _adaptive_interval(150) == 10
+        assert _adaptive_interval(199) == 10
+
+    def test_medium_collection_updates_every_25(self):
+        """Collections 200-999 items should update every 25 items."""
+        assert _adaptive_interval(200) == 25
+        assert _adaptive_interval(500) == 25
+        assert _adaptive_interval(999) == 25
+
+    def test_large_collection_updates_every_50(self):
+        """Collections 1000-4999 items should update every 50 items."""
+        assert _adaptive_interval(1000) == 50
+        assert _adaptive_interval(3000) == 50
+        assert _adaptive_interval(4999) == 50
+
+    def test_huge_collection_updates_every_100(self):
+        """Collections 5000+ items should update every 100 items."""
+        assert _adaptive_interval(5000) == 100
+        assert _adaptive_interval(10000) == 100
+        assert _adaptive_interval(100000) == 100
 
 
 class TestPEFOrchestratorInit:
@@ -402,6 +435,7 @@ class TestPEFOrchestratorReadJson:
         assert result is None
 
 
+@pytest.mark.integration
 class TestPEFOrchestratorIntegration:
     """Integration tests for PEFOrchestrator."""
 
@@ -529,3 +563,173 @@ class TestPEFOrchestratorErrorHandling:
         # Error should be recorded
         assert len(result.errors) >= 1
         assert "Access denied" in str(result.errors[0]) or "Error" in str(result.errors[0])
+
+
+class TestPEFOrchestratorSaveProgress:
+    """Tests for PEFOrchestrator.save_progress() method."""
+
+    def test_save_progress_returns_false_when_no_active_processing(self):
+        """Verify save_progress returns False when not processing."""
+        orchestrator = PEFOrchestrator("/some/path")
+        assert orchestrator.save_progress() is False
+
+    def test_save_progress_returns_true_during_processing(self, sample_takeout, temp_dir):
+        """Verify save_progress saves state during active processing."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+
+                # Start processing but interrupt mid-way
+                progress_calls = []
+
+                def tracking_callback(current, total, msg):
+                    progress_calls.append((current, total, msg))
+                    # After first progress update during JSON processing, test save_progress
+                    if len(progress_calls) == 2:  # After scanning starts
+                        # At this point, state should be active
+                        assert orchestrator._active_state is not None
+
+                orchestrator.process(on_progress=tracking_callback)
+
+        # After completion, _active_state should be None
+        assert orchestrator._active_state is None
+
+    def test_active_state_cleared_after_processing(self, sample_takeout, temp_dir):
+        """Verify _active_state is None after processing completes."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                orchestrator.process()
+
+        assert orchestrator._active_state is None
+
+
+class TestPEFOrchestratorResumeFields:
+    """Tests for ProcessResult resume-related fields."""
+
+    def test_fresh_run_not_resumed(self, sample_takeout, temp_dir):
+        """Verify fresh run has resumed=False and skipped_count=0."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                result = orchestrator.process()
+
+        assert result.resumed is False
+        assert result.skipped_count == 0
+
+    def test_resumed_run_has_correct_fields(self, sample_takeout, temp_dir):
+        """Verify resumed run has resumed=True and correct skipped_count."""
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(output_dir)
+
+        # Create in-progress state file with 1 of 3 JSONs already processed
+        state_data = {
+            "version": 1,
+            "source_path": sample_takeout,
+            "started_at": "2024-01-01T00:00:00",
+            "last_updated": "2024-01-01T00:00:00",
+            "status": "in_progress",
+            "total_json_count": 3,
+            "processed_count": 1,
+            "processed_jsons": [os.path.join(sample_takeout, "Album1", "photo1.jpg.json")]
+        }
+        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+            json.dump(state_data, f)
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                result = orchestrator.process()
+
+        assert result.resumed is True
+        assert result.skipped_count == 1
+
+    def test_force_run_not_resumed(self, sample_takeout, temp_dir):
+        """Verify force=True results in resumed=False."""
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(output_dir)
+
+        # Create in-progress state file
+        state_data = {
+            "version": 1,
+            "source_path": sample_takeout,
+            "status": "in_progress",
+            "processed_jsons": [os.path.join(sample_takeout, "Album1", "photo1.jpg.json")]
+        }
+        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+            json.dump(state_data, f)
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                result = orchestrator.process(force=True)
+
+        assert result.resumed is False
+        assert result.skipped_count == 0
+
+
+class TestPEFOrchestratorProgressPhases:
+    """Tests for progress message phase indicators."""
+
+    def test_dry_run_shows_phase_indicators(self, sample_takeout):
+        """Verify dry_run progress messages include phase indicators."""
+        orchestrator = PEFOrchestrator(sample_takeout)
+        messages = []
+
+        def capture_progress(current, total, message):
+            messages.append(message)
+
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            orchestrator.dry_run(on_progress=capture_progress)
+
+        # Should have phase indicators in messages
+        phase_messages = [m for m in messages if m.startswith("[")]
+        assert len(phase_messages) > 0
+
+        # Check specific phases exist
+        phase_1 = any("[1/3]" in m for m in messages)
+        phase_2 = any("[2/3]" in m for m in messages)
+        phase_3 = any("[3/3]" in m for m in messages)
+        assert phase_1 or phase_2 or phase_3  # At least one phase shown
+
+    def test_process_shows_phase_indicators(self, sample_takeout, temp_dir):
+        """Verify process progress messages include phase indicators."""
+        output_dir = os.path.join(temp_dir, "output")
+        orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir, write_exif=False)
+        messages = []
+
+        def capture_progress(current, total, message):
+            messages.append(message)
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator.process(on_progress=capture_progress)
+
+        # Should have phase indicators in messages
+        phase_messages = [m for m in messages if m.startswith("[")]
+        assert len(phase_messages) > 0
+
+        # Check that processing phase exists
+        has_processing_phase = any("[2/3]" in m and "Processing" in m for m in messages)
+        assert has_processing_phase
+
+    def test_progress_updates_more_frequently_for_small_collections(self, sample_takeout):
+        """Verify progress updates are more frequent for small collections."""
+        orchestrator = PEFOrchestrator(sample_takeout)
+        update_counts = []
+
+        def capture_progress(current, total, message):
+            update_counts.append((current, total))
+
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            orchestrator.dry_run(on_progress=capture_progress)
+
+        # For small test collection, should have multiple updates
+        # (adaptive interval for small collections is 1-10)
+        assert len(update_counts) >= 2

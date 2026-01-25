@@ -7,8 +7,9 @@ import logging
 import os
 import shutil
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Optional, List, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import filedate
 
@@ -25,6 +26,7 @@ class FileProcessor:
     """Processes files by copying, setting dates, and writing metadata.
 
     Supports batch metadata writing for improved performance (10-50x faster).
+    Supports parallel file copying for I/O-bound speedup.
 
     Usage:
         with FileProcessor(output_dir) as processor:
@@ -36,14 +38,17 @@ class FileProcessor:
         print(processor.stats)
     """
 
-    DEFAULT_BATCH_SIZE = 50
+    DEFAULT_BATCH_SIZE = 100
+    DEFAULT_COPY_WORKERS = 4
 
     def __init__(
         self,
         output_dir: str,
         logger: Optional[BufferedLogger] = None,
         write_exif: bool = True,
-        batch_size: int = DEFAULT_BATCH_SIZE
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        verbose: bool = False,
+        copy_workers: int = DEFAULT_COPY_WORKERS
     ):
         """Initialize processor.
 
@@ -51,18 +56,22 @@ class FileProcessor:
             output_dir: Root output directory.
             logger: Optional logger for detailed logging.
             write_exif: Whether to write EXIF metadata (default True).
-            batch_size: Number of files to batch for metadata writing (default 50).
+            batch_size: Number of files to batch for metadata writing (default 100).
+            verbose: If True, log all operations. If False, only log errors/warnings.
+            copy_workers: Number of parallel workers for file copying (default 4).
         """
         self.output_dir = output_dir
         self.processed_dir = os.path.join(output_dir, "Processed")
         self.unprocessed_dir = os.path.join(output_dir, "Unprocessed")
         self.logger = logger
         self.write_exif = write_exif
+        self.verbose = verbose
         self.stats = ProcessingStats()
 
         self._exiftool: Optional[ExifToolManager] = None
         self._pending_writes: List[Tuple[str, dict]] = []
         self._batch_size = batch_size
+        self._copy_workers = copy_workers
 
     def start(self) -> None:
         """Start the processor (initialize ExifTool if needed)."""
@@ -146,7 +155,7 @@ class FileProcessor:
         batch = self._pending_writes
         self._pending_writes = []
 
-        if self.logger:
+        if self.logger and self.verbose:
             self.logger.log(f"Flushing batch of {len(batch)} metadata writes...")
 
         results = self._exiftool.write_tags_batch(batch)
@@ -195,7 +204,7 @@ class FileProcessor:
         dest_path = get_unique_path(os.path.join(album_dir, file.filename))
 
         # Copy file
-        if self.logger:
+        if self.logger and self.verbose:
             self.logger.log(f"Copying: {file.filepath} -> {dest_path}")
         shutil.copy(file.filepath, dest_path)
 
@@ -219,10 +228,104 @@ class FileProcessor:
         # Update stats (GPS/people counted per JSON by orchestrator)
         self.stats.processed += 1
 
-        if self.logger:
+        if self.logger and self.verbose:
             self.logger.log(f"Processed: {file.filename}")
 
         return dest_path
+
+    def _copy_and_set_date(
+        self,
+        src_path: str,
+        dest_path: str,
+        date: datetime
+    ) -> Tuple[str, Optional[str]]:
+        """Copy a file and set its dates (for parallel execution).
+
+        Args:
+            src_path: Source file path.
+            dest_path: Destination file path.
+            date: Date to set on the file.
+
+        Returns:
+            Tuple of (dest_path, error_message or None).
+        """
+        try:
+            shutil.copy(src_path, dest_path)
+            try:
+                filedate.File(dest_path).set(created=date, modified=date)
+            except Exception as e:
+                # Date setting failure is non-fatal
+                return (dest_path, f"Warning: Could not set dates: {e}")
+            return (dest_path, None)
+        except Exception as e:
+            return (dest_path, f"Error: {e}")
+
+    def process_files_batch(
+        self,
+        files_with_metadata: List[Tuple[FileInfo, JsonMetadata]]
+    ) -> List[Tuple[FileInfo, str, Optional[str]]]:
+        """Process multiple files with parallel copying.
+
+        Args:
+            files_with_metadata: List of (FileInfo, JsonMetadata) tuples.
+
+        Returns:
+            List of (FileInfo, dest_path, error_or_none) tuples.
+        """
+        if not files_with_metadata:
+            return []
+
+        # Prepare all destinations and tasks
+        tasks = []
+        for file, metadata in files_with_metadata:
+            album_dir = checkout_dir(os.path.join(self.processed_dir, file.album_name))
+            dest_path = get_unique_path(os.path.join(album_dir, file.filename))
+            tasks.append((file, metadata, dest_path))
+
+        results = []
+
+        # Use ThreadPoolExecutor for parallel copying
+        with ThreadPoolExecutor(max_workers=self._copy_workers) as executor:
+            # Submit all copy jobs
+            future_to_task = {
+                executor.submit(
+                    self._copy_and_set_date,
+                    task[0].filepath,  # file.filepath
+                    task[2],           # dest_path
+                    task[1].date       # metadata.date
+                ): task
+                for task in tasks
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_task):
+                file, metadata, dest_path = future_to_task[future]
+                try:
+                    _, error = future.result()
+
+                    if error and self.logger:
+                        self.logger.log(f"{error} for {dest_path}")
+
+                    # Update file info
+                    file.output_path = dest_path
+                    file.json_path = metadata.filepath
+
+                    # Queue metadata write
+                    if self._exiftool and self.write_exif and not error:
+                        tags = self._build_tags(metadata)
+                        if tags:
+                            self.queue_metadata_write(dest_path, tags)
+
+                    self.stats.processed += 1
+                    results.append((file, dest_path, error))
+
+                except Exception as e:
+                    error_msg = f"Error processing {file.filepath}: {e}"
+                    if self.logger:
+                        self.logger.log(error_msg)
+                    results.append((file, dest_path, error_msg))
+
+        return results
 
     def _write_metadata(self, filepath: str, metadata: JsonMetadata) -> bool:
         """Write EXIF metadata to a file immediately (not batched).
@@ -265,7 +368,7 @@ class FileProcessor:
         dest_path = get_unique_path(os.path.join(self.unprocessed_dir, file.filename))
 
         # Copy file
-        if self.logger:
+        if self.logger and self.verbose:
             self.logger.log(f"Copying unprocessed: {file.filepath}")
         shutil.copy(file.filepath, dest_path)
 
@@ -304,9 +407,9 @@ def copy_modify(
     file: dict,
     date: datetime,
     copyto: str,
-    geo_data: Optional[dict] = None,
-    people: Optional[list] = None,
-    exiftool_helper: Any = None
+    geo_data: Optional[Dict[str, Any]] = None,
+    people: Optional[List[Dict[str, Any]]] = None,
+    exiftool_helper: Optional[Any] = None
 ) -> str:
     """Copy and modify a file (backwards compatible).
 

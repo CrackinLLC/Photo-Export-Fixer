@@ -143,6 +143,9 @@ class ProcessRunResult:
     start_time: str
     end_time: str
     errors: List[str] = field(default_factory=list)
+    resumed: bool = False
+    skipped_count: int = 0
+    interrupted: bool = False
 
 
 # Alias for backwards compatibility

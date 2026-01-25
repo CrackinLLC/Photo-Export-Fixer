@@ -268,3 +268,199 @@ class TestMainPathNormalization:
 
             args, _ = mock_process.call_args
             assert args[1] is not None
+
+
+class TestRunProcessInterrupt:
+    """Tests for interrupt handling in run_process()."""
+
+    def test_keyboard_interrupt_saves_progress(self, sample_takeout, temp_dir, capsys):
+        """Verify KeyboardInterrupt saves progress and returns 130."""
+        from pef.core.models import ProcessResult, ProcessingStats
+
+        with patch('pef.cli.main.PEFOrchestrator') as MockOrch:
+            mock_orch = MagicMock()
+            mock_orch.process.side_effect = KeyboardInterrupt()
+            mock_orch.save_progress.return_value = True
+            MockOrch.return_value = mock_orch
+
+            result = run_process(
+                sample_takeout,
+                os.path.join(temp_dir, "output"),
+                ["", "-edited"],
+                write_exif=False
+            )
+
+        assert result == 130  # SIGINT exit code
+        mock_orch.save_progress.assert_called_once()
+
+        captured = capsys.readouterr()
+        assert "Interrupted" in captured.out
+        assert "Progress saved" in captured.out
+
+    def test_keyboard_interrupt_no_progress_to_save(self, sample_takeout, temp_dir, capsys):
+        """Verify message when no progress to save."""
+        with patch('pef.cli.main.PEFOrchestrator') as MockOrch:
+            mock_orch = MagicMock()
+            mock_orch.process.side_effect = KeyboardInterrupt()
+            mock_orch.save_progress.return_value = False
+            MockOrch.return_value = mock_orch
+
+            result = run_process(
+                sample_takeout,
+                os.path.join(temp_dir, "output"),
+                ["", "-edited"],
+                write_exif=False
+            )
+
+        assert result == 130
+        captured = capsys.readouterr()
+        assert "No progress to save" in captured.out
+
+
+class TestRunProcessResumeDisplay:
+    """Tests for resume info display in run_process()."""
+
+    def test_displays_resume_info(self, sample_takeout, temp_dir, capsys):
+        """Verify resume info is displayed when resuming."""
+        from pef.core.models import ProcessResult, ProcessingStats
+
+        mock_result = ProcessResult(
+            stats=ProcessingStats(processed=50),
+            output_dir=temp_dir,
+            processed_dir=os.path.join(temp_dir, "Processed"),
+            unprocessed_dir=os.path.join(temp_dir, "Unprocessed"),
+            log_file=os.path.join(temp_dir, "logs.txt"),
+            elapsed_time=10.5,
+            start_time="2024-01-01 00:00:00",
+            end_time="2024-01-01 00:00:10",
+            resumed=True,
+            skipped_count=100
+        )
+
+        with patch('pef.cli.main.PEFOrchestrator') as MockOrch:
+            mock_orch = MagicMock()
+            mock_orch.process.return_value = mock_result
+            MockOrch.return_value = mock_orch
+
+            run_process(
+                sample_takeout,
+                temp_dir,
+                ["", "-edited"],
+                write_exif=False
+            )
+
+        captured = capsys.readouterr()
+        assert "Resumed from previous run" in captured.out
+        assert "skipped 100" in captured.out
+        assert "plus 100 from previous run" in captured.out
+
+    def test_no_resume_info_for_fresh_run(self, sample_takeout, temp_dir, capsys):
+        """Verify no resume info for fresh runs."""
+        from pef.core.models import ProcessResult, ProcessingStats
+
+        mock_result = ProcessResult(
+            stats=ProcessingStats(processed=50),
+            output_dir=temp_dir,
+            processed_dir=os.path.join(temp_dir, "Processed"),
+            unprocessed_dir=os.path.join(temp_dir, "Unprocessed"),
+            log_file=os.path.join(temp_dir, "logs.txt"),
+            elapsed_time=10.5,
+            start_time="2024-01-01 00:00:00",
+            end_time="2024-01-01 00:00:10",
+            resumed=False,
+            skipped_count=0
+        )
+
+        with patch('pef.cli.main.PEFOrchestrator') as MockOrch:
+            mock_orch = MagicMock()
+            mock_orch.process.return_value = mock_result
+            MockOrch.return_value = mock_orch
+
+            run_process(
+                sample_takeout,
+                temp_dir,
+                ["", "-edited"],
+                write_exif=False
+            )
+
+        captured = capsys.readouterr()
+        assert "Resumed from previous run" not in captured.out
+        assert "from previous run" not in captured.out
+
+
+@pytest.mark.integration
+class TestCLIWithRealOrchestrator:
+    """CLI tests using actual orchestrator with minimal mocking.
+
+    Only mocks exiftool and filedate to avoid external dependencies.
+    """
+
+    def test_run_process_with_real_orchestrator(self, sample_takeout, temp_dir, capsys):
+        """Test run_process with actual orchestrator (only mock exiftool/filedate)."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                result = run_process(
+                    sample_takeout,
+                    output_dir,
+                    ["", "-edited"],
+                    write_exif=False
+                )
+
+        assert result == 0
+
+        # Verify actual output was created
+        assert os.path.exists(output_dir)
+        assert os.path.exists(os.path.join(output_dir, "Processed"))
+        assert os.path.exists(os.path.join(output_dir, "logs.txt"))
+
+        # Verify output shows completion
+        captured = capsys.readouterr()
+        assert "Finished!" in captured.out
+        assert "Processed:" in captured.out
+
+    def test_run_dry_run_with_real_orchestrator(self, sample_takeout, capsys):
+        """Test run_dry_run with actual orchestrator."""
+        output_dir = sample_takeout + "_pefProcessed"
+
+        result = run_dry_run(sample_takeout, output_dir, ["", "-edited"])
+
+        assert result == 0
+
+        # Verify dry-run output
+        captured = capsys.readouterr()
+        assert "DRY RUN" in captured.out
+        assert "JSON metadata files" in captured.out
+        assert "media files" in captured.out
+
+        # Verify no actual output was created
+        assert not os.path.exists(output_dir)
+
+    def test_run_process_creates_correct_structure(self, sample_takeout, temp_dir):
+        """Verify actual file structure is created correctly."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                run_process(
+                    sample_takeout,
+                    output_dir,
+                    ["", "-edited"],
+                    write_exif=False
+                )
+
+        # Check Processed folder has album subfolders
+        processed_dir = os.path.join(output_dir, "Processed")
+        assert os.path.exists(processed_dir)
+
+        # Should have Album1 and Album2 from sample_takeout
+        album1 = os.path.join(processed_dir, "Album1")
+        album2 = os.path.join(processed_dir, "Album2")
+        assert os.path.exists(album1)
+        assert os.path.exists(album2)
+
+        # Check files were actually copied
+        assert os.path.exists(os.path.join(album1, "photo1.jpg"))
+        assert os.path.exists(os.path.join(album1, "photo2.jpg"))
+        assert os.path.exists(os.path.join(album2, "image.png"))

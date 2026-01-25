@@ -7,8 +7,9 @@ Used by both CLI and GUI.
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Optional, List
+from typing import Dict, Optional, List
 
 # Use orjson for faster JSON parsing (3-10x faster than stdlib json)
 try:
@@ -31,6 +32,29 @@ from pef.core.processor import FileProcessor
 from pef.core.logger import BufferedLogger, SummaryLogger
 from pef.core.exiftool import is_exiftool_available
 from pef.core.state import StateManager
+
+
+def _adaptive_interval(total: int) -> int:
+    """Calculate adaptive progress update interval based on total count.
+
+    More frequent updates for smaller collections, less frequent for larger ones.
+
+    Args:
+        total: Total number of items to process.
+
+    Returns:
+        Update interval (report progress every N items).
+    """
+    if total < 50:
+        return 1  # Every item for tiny collections
+    elif total < 200:
+        return 10
+    elif total < 1000:
+        return 25
+    elif total < 5000:
+        return 50
+    else:
+        return 100
 
 
 class PEFOrchestrator:
@@ -62,7 +86,8 @@ class PEFOrchestrator:
         source_path: str,
         dest_path: Optional[str] = None,
         suffixes: Optional[List[str]] = None,
-        write_exif: bool = True
+        write_exif: bool = True,
+        verbose: bool = False
     ):
         """Initialize orchestrator.
 
@@ -71,11 +96,27 @@ class PEFOrchestrator:
             dest_path: Output directory (default: source_path + "_pefProcessed").
             suffixes: Filename suffixes to try (default: ["", "-edited"]).
             write_exif: Whether to write EXIF metadata.
+            verbose: If True, log all operations. If False, only log errors/warnings.
         """
         self.source_path = source_path
         self.dest_path = dest_path or f"{source_path}_pefProcessed"
         self.suffixes = suffixes or DEFAULT_SUFFIXES
         self.write_exif = write_exif
+        self.verbose = verbose
+        self._active_state: Optional[StateManager] = None
+
+    def save_progress(self) -> bool:
+        """Save current processing progress for later resume.
+
+        Call this on interrupt (e.g., Ctrl+C) to ensure progress is saved.
+
+        Returns:
+            True if progress was saved, False if no active processing.
+        """
+        if self._active_state:
+            self._active_state.save()
+            return True
+        return False
 
     def dry_run(
         self,
@@ -103,9 +144,9 @@ class PEFOrchestrator:
                 from pef.core.exiftool import get_exiftool_path
                 result.exiftool_path = get_exiftool_path()
 
-        # Scan files
+        # Phase 1: Scan files
         if on_progress:
-            on_progress(0, 100, "Scanning files...")
+            on_progress(0, 100, "[1/3] Scanning files...")
 
         scanner = FileScanner(self.source_path)
         scanner.scan(on_progress)
@@ -119,32 +160,35 @@ class PEFOrchestrator:
                 "No JSON metadata files found. This may not be a valid Google Takeout directory."
             )
 
-        # Analyze matches
+        # Phase 2: Read all JSONs concurrently for faster analysis
+        if on_progress:
+            on_progress(0, 100, "[2/3] Reading metadata...")
+
+        json_metadata = self._read_jsons_batch(scanner.jsons)
+
+        # Phase 3: Analyze matches
         matcher = FileMatcher(scanner.file_index, self.suffixes)
 
         total_jsons = len(scanner.jsons)
+        interval = _adaptive_interval(total_jsons)
+
         for i, json_path in enumerate(scanner.jsons):
-            if on_progress and i % 100 == 0:
-                on_progress(i, total_jsons, f"Analyzing: {os.path.basename(json_path)}")
+            if on_progress and i % interval == 0:
+                on_progress(i, total_jsons, f"[3/3] Analyzing: {os.path.basename(json_path)}")
 
-            try:
-                metadata = self._read_json(json_path)
-                if not metadata:
-                    result.unmatched_json_count += 1
-                    continue
+            metadata = json_metadata.get(json_path)
+            if not metadata:
+                result.unmatched_json_count += 1
+                continue
 
-                match = matcher.find_match(json_path, metadata.title)
-                if match.found:
-                    result.matched_count += 1
-                    if metadata.has_location():
-                        result.with_gps += 1
-                    if metadata.has_people():
-                        result.with_people += 1
-                else:
-                    result.unmatched_json_count += 1
-
-            except Exception as e:
-                logger.debug(f"Error processing JSON {json_path}: {e}")
+            match = matcher.find_match(json_path, metadata.title)
+            if match.found:
+                result.matched_count += 1
+                if metadata.has_location():
+                    result.with_gps += 1
+                if metadata.has_people():
+                    result.with_people += 1
+            else:
                 result.unmatched_json_count += 1
 
         result.unmatched_file_count = result.file_count - result.matched_count
@@ -228,28 +272,32 @@ class PEFOrchestrator:
             end_time=""
         )
 
-        # Scan
+        # Phase 1: Scan
         if on_progress:
-            on_progress(0, 100, "Scanning files...")
+            on_progress(0, 100, "[1/3] Scanning files...")
 
         scanner = FileScanner(self.source_path)
         scanner.scan()
 
-        # Initialize or update state manager
-        state = StateManager(output_dir)
+        # Initialize or update state manager (stored as instance var for interrupt handling)
+        self._active_state = StateManager(output_dir)
         if resuming:
-            state.load()
+            self._active_state.load()
         else:
-            state.create(self.source_path, len(scanner.jsons))
+            self._active_state.create(self.source_path, len(scanner.jsons))
 
         # Filter to unprocessed JSONs
-        jsons_to_process = state.filter_unprocessed(scanner.jsons)
+        jsons_to_process = self._active_state.filter_unprocessed(scanner.jsons)
         skipped_count = len(scanner.jsons) - len(jsons_to_process)
+
+        # Populate resume info on result
+        result.resumed = resuming
+        result.skipped_count = skipped_count
 
         if skipped_count > 0 and on_progress:
             on_progress(0, 100, f"Resuming: skipping {skipped_count} already processed")
 
-        # Process
+        # Phase 2: Process matched files
         processed_files = []
         unprocessed_jsons = []
         matched_file_paths = set()
@@ -260,13 +308,15 @@ class PEFOrchestrator:
             else:
                 file_logger.log(f"Started processing: {self.source_path}")
 
-            with FileProcessor(output_dir, logger=file_logger, write_exif=self.write_exif) as processor:
+            with FileProcessor(output_dir, logger=file_logger, write_exif=self.write_exif, verbose=self.verbose) as processor:
                 matcher = FileMatcher(scanner.file_index, self.suffixes)
 
                 total = len(jsons_to_process)
+                interval = _adaptive_interval(total)
+
                 for i, json_path in enumerate(jsons_to_process):
-                    if on_progress and i % 100 == 0:
-                        on_progress(i, total, f"Processing: {os.path.basename(json_path)}")
+                    if on_progress and i % interval == 0:
+                        on_progress(i, total, f"[2/3] Processing: {os.path.basename(json_path)}")
 
                     # Periodic flush of batched metadata writes for progress visibility
                     if i > 0 and i % 500 == 0:
@@ -277,10 +327,9 @@ class PEFOrchestrator:
                         unprocessed_jsons.append({
                             "filename": os.path.basename(json_path),
                             "filepath": json_path,
-                            "title": "Invalid JSON",
-                            "time": time.strftime("%Y-%m-%d %H:%M:%S")
+                            "title": "Invalid JSON"
                         })
-                        state.mark_processed(json_path)
+                        self._active_state.mark_processed(json_path)
                         continue
 
                     match = matcher.find_match(json_path, metadata.title)
@@ -294,8 +343,7 @@ class PEFOrchestrator:
                                     "filename": file_info.filename,
                                     "filepath": file_info.filepath,
                                     "output_path": dest,
-                                    "json_path": json_path,
-                                    "time": time.strftime("%Y-%m-%d %H:%M:%S")
+                                    "json_path": json_path
                                 })
                                 any_success = True
                             except Exception as e:
@@ -310,26 +358,27 @@ class PEFOrchestrator:
                         unprocessed_jsons.append({
                             "filename": os.path.basename(json_path),
                             "filepath": json_path,
-                            "title": metadata.title,
-                            "time": time.strftime("%Y-%m-%d %H:%M:%S")
+                            "title": metadata.title
                         })
 
                     # Mark this JSON as processed for resume capability
-                    state.mark_processed(json_path)
+                    self._active_state.mark_processed(json_path)
 
-                # Handle unmatched files
+                # Phase 3: Handle unmatched files
                 unmatched_files = [
                     f for f in scanner.files
                     if f.filepath not in matched_file_paths
                 ]
 
                 if on_progress:
-                    on_progress(0, len(unmatched_files), "Copying unmatched files...")
+                    on_progress(0, len(unmatched_files), "[3/3] Copying unmatched files...")
 
                 unprocessed_file_records = []
+                unmatched_interval = _adaptive_interval(len(unmatched_files))
+
                 for i, file_info in enumerate(unmatched_files):
-                    if on_progress and i % 100 == 0:
-                        on_progress(i, len(unmatched_files), f"Copying: {file_info.filename}")
+                    if on_progress and i % unmatched_interval == 0:
+                        on_progress(i, len(unmatched_files), f"[3/3] Copying: {file_info.filename}")
 
                     dest = processor.copy_unmatched_file(file_info)
                     unprocessed_file_records.append({
@@ -356,8 +405,9 @@ class PEFOrchestrator:
             end_time=end_date
         )
 
-        # Mark processing as complete
-        state.complete()
+        # Mark processing as complete and clear active state
+        self._active_state.complete()
+        self._active_state = None
 
         if on_progress:
             on_progress(total, total, "Processing complete")
@@ -401,3 +451,47 @@ class PEFOrchestrator:
         except Exception as e:
             logger.debug(f"Error reading JSON {path}: {e}")
             return None
+
+    def _read_jsons_batch(
+        self,
+        paths: List[str],
+        max_workers: int = 8
+    ) -> Dict[str, Optional[JsonMetadata]]:
+        """Read multiple JSON files concurrently using thread pool.
+
+        Uses ThreadPoolExecutor for 2-4x faster I/O on larger collections.
+
+        Args:
+            paths: List of JSON file paths to read.
+            max_workers: Maximum concurrent threads (default: 8).
+
+        Returns:
+            Dict mapping path -> JsonMetadata (or None if invalid).
+        """
+        results: Dict[str, Optional[JsonMetadata]] = {}
+
+        if not paths:
+            return results
+
+        # For small batches, sequential is faster due to thread overhead
+        if len(paths) < 50:
+            for path in paths:
+                results[path] = self._read_json(path)
+            return results
+
+        # Use thread pool for larger batches
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_path = {
+                executor.submit(self._read_json, path): path
+                for path in paths
+            }
+
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                try:
+                    results[path] = future.result()
+                except Exception as e:
+                    logger.debug(f"Thread error reading {path}: {e}")
+                    results[path] = None
+
+        return results

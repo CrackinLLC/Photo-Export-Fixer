@@ -271,6 +271,40 @@ class TestExifToolManagerWithMockedExiftool:
 
                 assert result == {"GPSLatitude": 40.7}
 
+    def test_read_tags_no_tags_calls_get_metadata(self, mock_exiftool_module):
+        """Verify read_tags with no tags argument calls get_metadata."""
+        mock_module, mock_helper = mock_exiftool_module
+        mock_helper.get_metadata.return_value = [{"EXIF:Make": "Canon", "EXIF:Model": "EOS"}]
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                manager.start()
+
+                result = manager.read_tags("/path/file.jpg")  # No tags specified
+
+                assert result == {"EXIF:Make": "Canon", "EXIF:Model": "EOS"}
+                mock_helper.get_metadata.assert_called_once_with("/path/file.jpg")
+                mock_helper.get_tags.assert_not_called()
+
+    def test_read_tags_empty_result(self, mock_exiftool_module):
+        """Verify read_tags returns empty dict when result list is empty."""
+        mock_module, mock_helper = mock_exiftool_module
+        mock_helper.get_tags.return_value = []  # Empty result list
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                manager.start()
+
+                result = manager.read_tags("/path/nonexistent.jpg", ["GPSLatitude"])
+
+                assert result == {}
+
 
 class TestExifToolManagerBatchOperations:
     """Tests for batch operations in ExifToolManager."""

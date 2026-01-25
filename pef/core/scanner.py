@@ -88,10 +88,20 @@ class FileScanner:
 
         # Single-pass scanning using fast_walk (no double traversal)
         files_found = 0
-        progress_interval = 500  # Update progress every N files
+        # Start with moderate interval, but report at least every second or so
+        # For small folders this gives immediate feedback
+        progress_interval = 100
+        last_dir = ""
 
         for dirpath, dirnames, filenames in _fast_walk(self.path):
             album_name = os.path.basename(dirpath)
+
+            # Show directory change for immediate feedback
+            if on_progress and dirpath != last_dir:
+                last_dir = dirpath
+                # Only show dir updates when we have some files found
+                if files_found > 0:
+                    on_progress(files_found, files_found, f"Scanning: {album_name}...")
 
             for filename in filenames:
                 filepath = os.path.join(dirpath, filename)
@@ -108,9 +118,13 @@ class FileScanner:
 
                 files_found += 1
 
-                # Update progress periodically (not every file to reduce overhead)
+                # Update progress periodically
+                # Adaptive: more frequent updates for smaller collections
                 if on_progress and files_found % progress_interval == 0:
                     on_progress(files_found, files_found, f"Found {files_found} files...")
+                    # Increase interval as we find more files to reduce overhead
+                    if files_found >= 1000 and progress_interval < 500:
+                        progress_interval = 500
 
         # Build index for O(1) lookups
         self._build_index()
@@ -138,6 +152,20 @@ class FileScanner:
     def file_count(self) -> int:
         """Number of media files found."""
         return len(self.files)
+
+    def iter_jsons(self) -> Iterator[str]:
+        """Iterate over JSON paths without storing them all in memory.
+
+        This is a generator-based alternative for memory-constrained environments.
+        Note: Cannot be used with matching since file_index won't be available.
+
+        Yields:
+            JSON file paths as they are discovered.
+        """
+        for dirpath, dirnames, filenames in _fast_walk(self.path):
+            for filename in filenames:
+                if filename.endswith(".json"):
+                    yield os.path.join(dirpath, filename)
 
     @property
     def is_scanned(self) -> bool:

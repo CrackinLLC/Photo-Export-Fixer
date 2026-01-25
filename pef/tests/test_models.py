@@ -209,3 +209,40 @@ class TestProcessResultClass:
         assert result.output_dir == "/output"
         assert result.elapsed_time == 5.5
         assert result.errors == []
+
+    def test_resume_fields_defaults(self):
+        """Verify resume fields default to False/0."""
+        stats = ProcessingStats()
+        result = ProcessResult(
+            stats=stats,
+            output_dir="/output",
+            processed_dir="/output/Processed",
+            unprocessed_dir="/output/Unprocessed",
+            log_file="/output/logs.txt",
+            elapsed_time=0,
+            start_time="",
+            end_time=""
+        )
+        assert result.resumed is False
+        assert result.skipped_count == 0
+        assert result.interrupted is False
+
+    def test_resume_fields_set_explicitly(self):
+        """Verify resume fields can be set explicitly."""
+        stats = ProcessingStats()
+        result = ProcessResult(
+            stats=stats,
+            output_dir="/output",
+            processed_dir="/output/Processed",
+            unprocessed_dir="/output/Unprocessed",
+            log_file="/output/logs.txt",
+            elapsed_time=0,
+            start_time="",
+            end_time="",
+            resumed=True,
+            skipped_count=100,
+            interrupted=True
+        )
+        assert result.resumed is True
+        assert result.skipped_count == 100
+        assert result.interrupted is True

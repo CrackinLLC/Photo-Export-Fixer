@@ -226,7 +226,7 @@ class ExifToolManager:
             logger.debug(f"Failed to write tags to {filepath}: {e}")
             return False
 
-    def read_tags(self, filepath: str, tags: Optional[list] = None) -> dict:
+    def read_tags(self, filepath: str, tags: Optional[List[str]] = None) -> dict:
         """Read tags from a file.
 
         Args:

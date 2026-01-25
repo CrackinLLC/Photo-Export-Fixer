@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 # Use orjson for faster JSON parsing if available
 try:
@@ -207,7 +207,7 @@ class StateManager:
         except Exception as e:
             logger.warning(f"Failed to save state to {self.state_path}: {e}")
 
-    def _read_state_file(self) -> Optional[dict]:
+    def _read_state_file(self) -> Optional[Dict[str, Any]]:
         """Read and parse state file.
 
         Returns:

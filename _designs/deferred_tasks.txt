@@ -2,111 +2,33 @@ DEFERRED TASKS
 ==============
 Last Updated: 2026-01-24
 
-Tasks shelved for future consideration. Organized by category.
+Tasks shelved for future consideration. Organized by difficulty (easiest first).
 
 
 ================================================================================
-CODE QUALITY
+REMAINING TASKS - HARD (4+ hours)
 ================================================================================
 
-TASK: Consistent Optional type hints
+TASK: Async I/O with asyncio
 Priority: Low
-Effort: 30 min
+Effort: 4 hours
+Impact: Better I/O overlap
 
-Some parameters use Optional[X] while others use X = None. Standardize to:
-    def foo(x: Optional[str] = None)
-    # or
-    def foo(x: str | None = None)
-
-Files: Various throughout pef/core/
-
-
-================================================================================
-TEST IMPROVEMENTS
-================================================================================
-
-TASK: ExifTool read_tags test coverage
-Priority: Medium
-Effort: 15 min
-
-Add tests for:
-- read_tags with no tags specified (calls get_metadata)
-- read_tags returning empty result
-
-Location: pef/tests/test_exiftool.py
-
-
-TASK: Integration tests with real file operations
-Priority: Low
-Effort: 1-2 hours
-
-Create test_integration.py with tests that:
-- Create actual temp directory with realistic structure
-- Run full dry_run -> process workflow
-- Verify files actually copied
-- Verify dates actually set (without mocking filedate)
-
-
-TASK: CLI tests with less mocking
-Priority: Low
-Effort: 1 hour
-
-Some CLI tests could use the actual orchestrator with only exiftool/filedate
-mocked, instead of mocking the entire orchestrator.
-
-
-TASK: Test fixtures for edge cases
-Priority: Low
-Effort: 20 min
-
-Add to conftest.py:
-- Fixture for long filename scenario (51-char truncation)
-- Fixture for bracket/duplicate scenario
-
-
-TASK: Test infrastructure improvements
-Priority: Low
-Effort: 30 min
-
-- Add pytest markers (@pytest.mark.slow, @pytest.mark.integration)
-- Set up coverage reporting: pytest --cov=pef --cov-report=html
-- Consider pytest-randomly for test order randomization
-- Consider pytest-timeout for hanging test detection
-
-
-================================================================================
-PERFORMANCE OPTIMIZATIONS
-================================================================================
-
-Note: Profile before implementing any of these:
-    py-spy record -o profile.svg -- python -m pef --path /your/takeout
+Considerations:
+- Requires aiofiles dependency
+- Viral async/await throughout codebase
+- May not integrate well with ExifTool subprocess
 
 ---
 
-TASK: Thread Pool for JSON I/O
-Priority: Medium
-Effort: 1 hour
-Impact: 2-4x faster for I/O-bound operations
-
-Use ThreadPoolExecutor for concurrent JSON file reads.
-
-Considerations:
-- Adds complexity for thread safety
-- May not help if disk is the bottleneck (SSD vs HDD)
-- Requires careful error handling
-
----
-
-TASK: Generator-Based Pipeline
+TASK: SQLite Index for Huge Collections
 Priority: Low
-Effort: 1 hour
-Impact: Lower memory usage, faster startup
+Effort: 4 hours
+Impact: Handles millions of files
 
-Process files as discovered instead of loading all paths first.
+For collections too large to fit file index in RAM.
 
-Considerations:
-- Breaks current progress reporting (can't know total upfront)
-- May complicate matching logic
+Only needed for: Collections with 1M+ files
 
 ---
 
@@ -138,41 +60,10 @@ Considerations:
 - Complex debugging and error handling
 - Best suited for very large workloads
 
----
 
-TASK: Async I/O with asyncio
-Priority: Low
-Effort: 4 hours
-Impact: Better I/O overlap
-
-Considerations:
-- Requires aiofiles dependency
-- Viral async/await throughout codebase
-- May not integrate well with ExifTool subprocess
-
----
-
-TASK: SQLite Index for Huge Collections
-Priority: Low
-Effort: 4 hours
-Impact: Handles millions of files
-
-For collections too large to fit file index in RAM.
-
-Only needed for: Collections with 1M+ files
-
----
-
-TASK: Incremental Processing / Resume Support
-Priority: Medium
-Effort: 4 hours
-Impact: Resume interrupted jobs
-
-Write progress to state file, skip already-processed on restart.
-
-Useful for: Very long-running jobs that might be interrupted
-
----
+================================================================================
+REMAINING TASKS - VARIABLE/SIGNIFICANT
+================================================================================
 
 TASK: PyPy Compatibility
 Priority: Low
@@ -194,26 +85,16 @@ Only if: Profiling shows specific Python bottlenecks after other optimizations.
 
 
 ================================================================================
-UI/UX IMPROVEMENTS
+PROFILING NOTE
 ================================================================================
 
-TASK: Improve progress tracking granularity
-Priority: Low
-Effort: 2-3 hours
+Before implementing any performance optimization, profile to find actual bottlenecks:
 
-Current behavior:
-- Progress updates every 100 JSON files processed
-- No indication of progress within a single large album/directory
+    py-spy record -o profile.svg -- python -m pef --path /your/takeout
 
-Proposed improvements:
-- Add file-level progress updates within each directory
-- Consider a two-level progress indicator (directories + files)
-- May need to restructure progress callback for nested progress
+Or with cProfile:
 
-Considerations:
-- Balance update frequency vs performance overhead
-- GUI updates should still be batched to avoid UI lag
-- CLI progress bar (tqdm) may need different handling than GUI
+    python -m cProfile -o profile.out -m pef --path /your/takeout
 
 
 ================================================================================

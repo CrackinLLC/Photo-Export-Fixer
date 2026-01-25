@@ -119,7 +119,8 @@ def run_process(
     destination: Optional[str],
     suffixes: List[str],
     write_exif: bool,
-    force: bool = False
+    force: bool = False,
+    verbose: bool = False
 ) -> int:
     """Run main processing.
 
@@ -129,6 +130,7 @@ def run_process(
         suffixes: Filename suffixes.
         write_exif: Whether to write EXIF metadata.
         force: If True, ignore existing state and start fresh.
+        verbose: If True, log all operations (not just errors).
 
     Returns:
         Exit code (0 for success).
@@ -141,18 +143,35 @@ def run_process(
         source_path=path,
         dest_path=destination,
         suffixes=suffixes,
-        write_exif=write_exif
+        write_exif=write_exif,
+        verbose=verbose
     )
 
     print("\nProcess started...")
     print(f"Working in directory: {path}")
 
     callback, pbar = create_progress_callback("Processing")
+    interrupted = False
 
     try:
         result = orchestrator.process(on_progress=callback, force=force)
-    finally:
+    except KeyboardInterrupt:
+        # Handle Ctrl+C gracefully
+        interrupted = True
         pbar.close()
+        print("\n\nInterrupted! Saving progress...")
+        if orchestrator.save_progress():
+            print("Progress saved. You can resume by running the same command again.")
+        else:
+            print("No progress to save.")
+        return 130  # Standard exit code for SIGINT
+    finally:
+        if not interrupted:
+            pbar.close()
+
+    # Show resume info if this was a resumed run
+    if result.resumed:
+        print(f"\nResumed from previous run (skipped {result.skipped_count} already processed)")
 
     if result.errors:
         print(f"\nWarnings/Errors:")
@@ -163,6 +182,8 @@ def run_process(
 
     print("\nFinished!")
     print(f"Processed: {result.stats.processed} files")
+    if result.resumed:
+        print(f"  (plus {result.skipped_count} from previous run)")
     print(f"  With GPS: {result.stats.with_gps}")
     print(f"  With people: {result.stats.with_people}")
     print(f"Unprocessed: {result.stats.unmatched_files} files, {result.stats.unmatched_jsons} jsons")
@@ -228,6 +249,12 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true"
     )
 
+    parser.add_argument(
+        "-v", "--verbose",
+        help="Log all operations (default: only log errors/warnings)",
+        action="store_true"
+    )
+
     return parser.parse_args(args)
 
 
@@ -263,7 +290,8 @@ def main(args: Optional[List[str]] = None) -> int:
         return run_process(
             path, destination, suffixes,
             write_exif=not parsed.no_exif,
-            force=parsed.force
+            force=parsed.force,
+            verbose=parsed.verbose
         )
 
 
