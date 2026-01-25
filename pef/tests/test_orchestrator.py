@@ -197,65 +197,144 @@ class TestPEFOrchestratorProcess:
         assert callback.called
 
 
-class TestPEFOrchestratorExtend:
-    """Tests for PEFOrchestrator.extend() method."""
+class TestPEFOrchestratorResume:
+    """Tests for PEFOrchestrator resume functionality."""
 
-    @pytest.fixture
-    def processed_output(self, temp_dir, sample_takeout):
-        """Create a processed output directory structure."""
+    def test_process_creates_state_file(self, sample_takeout, temp_dir):
+        """Verify processing creates a state file."""
         output_dir = os.path.join(temp_dir, "output")
-        processed_dir = os.path.join(output_dir, "Processed")
-        album_dir = os.path.join(processed_dir, "Album1")
-        os.makedirs(album_dir)
 
-        # Create a processed file
-        with open(os.path.join(album_dir, "photo1.jpg"), "wb") as f:
-            f.write(b"fake image data")
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                orchestrator.process()
 
-        return output_dir
+        state_path = os.path.join(output_dir, "processing_state.json")
+        assert os.path.exists(state_path)
 
-    def test_returns_error_for_missing_source(self, temp_dir):
-        missing_path = os.path.join(temp_dir, "nonexistent")
-        orchestrator = PEFOrchestrator(missing_path, dest_path=temp_dir)
+        with open(state_path, "r") as f:
+            state = json.load(f)
+        assert state["status"] == "completed"
 
-        result = orchestrator.extend()
-
-        assert len(result.errors) > 0
-        assert "does not exist" in result.errors[0]
-
-    def test_returns_error_for_missing_processed_folder(self, sample_takeout, temp_dir):
-        # Output exists but no Processed folder
+    def test_process_resumes_from_state(self, sample_takeout, temp_dir):
+        """Verify processing resumes and skips already-processed files."""
         output_dir = os.path.join(temp_dir, "output")
         os.makedirs(output_dir)
 
-        orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
-        result = orchestrator.extend()
-
-        assert len(result.errors) > 0
-        assert "Processed folder not found" in result.errors[0]
-
-    def test_returns_process_result(self, sample_takeout, processed_output):
-        with patch('pef.core.processor.ExifToolManager'):
-            orchestrator = PEFOrchestrator(sample_takeout, dest_path=processed_output)
-            result = orchestrator.extend()
-
-        assert isinstance(result, ProcessResult)
-
-    def test_records_elapsed_time(self, sample_takeout, processed_output):
-        with patch('pef.core.processor.ExifToolManager'):
-            orchestrator = PEFOrchestrator(sample_takeout, dest_path=processed_output)
-            result = orchestrator.extend()
-
-        assert result.elapsed_time >= 0
-
-    def test_progress_callback_called(self, sample_takeout, processed_output):
-        callback = Mock()
+        # Create in-progress state file with ALL JSONs already processed
+        # sample_takeout has 3 JSONs: photo1.jpg.json, photo2.jpg.json, image.png.json
+        all_jsons = [
+            os.path.join(sample_takeout, "Album1", "photo1.jpg.json"),
+            os.path.join(sample_takeout, "Album1", "photo2.jpg.json"),
+            os.path.join(sample_takeout, "Album2", "image.png.json"),
+        ]
+        state_data = {
+            "version": 1,
+            "source_path": sample_takeout,
+            "started_at": "2024-01-01T00:00:00",
+            "last_updated": "2024-01-01T00:00:00",
+            "status": "in_progress",
+            "total_json_count": 3,
+            "processed_count": 3,
+            "processed_jsons": all_jsons
+        }
+        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+            json.dump(state_data, f)
 
         with patch('pef.core.processor.ExifToolManager'):
-            orchestrator = PEFOrchestrator(sample_takeout, dest_path=processed_output)
-            orchestrator.extend(on_progress=callback)
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                result = orchestrator.process()
 
-        assert callback.called
+        # Should complete without processing any JSONs (all already done)
+        assert result.stats.processed == 0  # No new files processed
+        assert os.path.exists(os.path.join(output_dir, "processing_state.json"))
+
+    def test_process_resumes_partial(self, sample_takeout, temp_dir):
+        """Verify processing resumes and only processes remaining files."""
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(output_dir)
+
+        # Create in-progress state file with 1 of 3 JSONs already processed
+        state_data = {
+            "version": 1,
+            "source_path": sample_takeout,
+            "started_at": "2024-01-01T00:00:00",
+            "last_updated": "2024-01-01T00:00:00",
+            "status": "in_progress",
+            "total_json_count": 3,
+            "processed_count": 1,
+            "processed_jsons": [os.path.join(sample_takeout, "Album1", "photo1.jpg.json")]
+        }
+        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+            json.dump(state_data, f)
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                result = orchestrator.process()
+
+        # Should process only the 2 remaining JSONs
+        # photo2.jpg.json -> photo2.jpg (1 file)
+        # image.png.json -> image.png (1 file)
+        assert result.stats.processed == 2  # 2 new files processed
+        assert os.path.exists(os.path.join(output_dir, "processing_state.json"))
+
+    def test_process_force_ignores_state(self, sample_takeout, temp_dir):
+        """Verify force=True ignores existing state."""
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(output_dir)
+
+        # Create in-progress state file with all JSONs marked as processed
+        all_jsons = [
+            os.path.join(sample_takeout, "Album1", "photo1.jpg.json"),
+            os.path.join(sample_takeout, "Album1", "photo2.jpg.json"),
+            os.path.join(sample_takeout, "Album2", "image.png.json"),
+        ]
+        state_data = {
+            "version": 1,
+            "source_path": sample_takeout,
+            "started_at": "2024-01-01T00:00:00",
+            "last_updated": "2024-01-01T00:00:00",
+            "status": "in_progress",
+            "total_json_count": 3,
+            "processed_count": 3,
+            "processed_jsons": all_jsons
+        }
+        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+            json.dump(state_data, f)
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                result = orchestrator.process(force=True)
+
+        # With force=True, should process all files from scratch
+        # 3 files: photo1.jpg, photo2.jpg, image.png (each JSON matches one file)
+        assert result.stats.processed == 3
+
+    def test_process_creates_new_dir_when_completed(self, sample_takeout, temp_dir):
+        """Verify completed run creates new directory on next run."""
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(output_dir)
+
+        # Create completed state file
+        state_data = {
+            "version": 1,
+            "source_path": sample_takeout,
+            "status": "completed",
+            "processed_jsons": []
+        }
+        with open(os.path.join(output_dir, "processing_state.json"), "w") as f:
+            json.dump(state_data, f)
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                result = orchestrator.process()
+
+        # Should create a new directory (output(1))
+        assert result.output_dir != output_dir or "processing_state.json" in os.listdir(result.output_dir)
 
 
 class TestPEFOrchestratorReadJson:

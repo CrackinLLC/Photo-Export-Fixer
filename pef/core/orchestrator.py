@@ -30,10 +30,14 @@ from pef.core.matcher import FileMatcher, DEFAULT_SUFFIXES
 from pef.core.processor import FileProcessor
 from pef.core.logger import BufferedLogger, SummaryLogger
 from pef.core.exiftool import is_exiftool_available
+from pef.core.state import StateManager
 
 
 class PEFOrchestrator:
     """Coordinates all Photo Export processing operations.
+
+    Supports automatic resume: if processing is interrupted, re-running
+    with the same output directory will skip already-processed files.
 
     Usage:
         orchestrator = PEFOrchestrator(
@@ -45,12 +49,12 @@ class PEFOrchestrator:
         result = orchestrator.dry_run(on_progress=my_callback)
         print(f"Would process: {result.matched_count} files")
 
-        # Actual processing
+        # Actual processing (auto-resumes if interrupted)
         result = orchestrator.process(on_progress=my_callback)
         print(f"Processed: {result.stats.processed} files")
 
-        # Extend metadata on existing files
-        result = orchestrator.extend(on_progress=my_callback)
+        # Force fresh start (ignore previous progress)
+        result = orchestrator.process(force=True)
     """
 
     def __init__(
@@ -152,12 +156,17 @@ class PEFOrchestrator:
 
     def process(
         self,
-        on_progress: Optional[ProgressCallback] = None
+        on_progress: Optional[ProgressCallback] = None,
+        force: bool = False
     ) -> ProcessResult:
-        """Run full processing.
+        """Run full processing with automatic resume support.
+
+        If a previous run was interrupted, processing will automatically
+        resume from where it left off (unless force=True).
 
         Args:
             on_progress: Optional callback for progress updates.
+            force: If True, start fresh and ignore any previous progress.
 
         Returns:
             ProcessResult with statistics and paths.
@@ -180,8 +189,33 @@ class PEFOrchestrator:
             result.errors.append(f"Source path does not exist: {self.source_path}")
             return result
 
-        # Create output directory
-        output_dir = checkout_dir(self.dest_path, onlynew=True)
+        # Check for resume before creating new directory
+        state = StateManager(self.dest_path)
+        resuming = False
+
+        if not force and state.can_resume():
+            state.load()
+            # Validate source path matches
+            if state.source_path == self.source_path:
+                resuming = True
+                output_dir = self.dest_path
+                logger.info(f"Resuming: {state.processed_count} files already processed")
+            else:
+                logger.warning(
+                    f"Source path changed (was: {state.source_path}). Starting fresh."
+                )
+                output_dir = checkout_dir(self.dest_path, onlynew=True)
+        elif not force and state.is_completed():
+            # Already completed - create new directory
+            logger.info("Previous run completed. Creating new output directory.")
+            output_dir = checkout_dir(self.dest_path, onlynew=True)
+        else:
+            # Fresh start or force
+            if exists(self.dest_path) and force:
+                # Force mode with existing directory - reuse it
+                output_dir = self.dest_path
+            else:
+                output_dir = checkout_dir(self.dest_path, onlynew=True)
 
         result = ProcessResult(
             stats=ProcessingStats(),
@@ -201,19 +235,36 @@ class PEFOrchestrator:
         scanner = FileScanner(self.source_path)
         scanner.scan()
 
+        # Initialize or update state manager
+        state = StateManager(output_dir)
+        if resuming:
+            state.load()
+        else:
+            state.create(self.source_path, len(scanner.jsons))
+
+        # Filter to unprocessed JSONs
+        jsons_to_process = state.filter_unprocessed(scanner.jsons)
+        skipped_count = len(scanner.jsons) - len(jsons_to_process)
+
+        if skipped_count > 0 and on_progress:
+            on_progress(0, 100, f"Resuming: skipping {skipped_count} already processed")
+
         # Process
         processed_files = []
         unprocessed_jsons = []
         matched_file_paths = set()
 
         with BufferedLogger(output_dir) as file_logger:
-            file_logger.log(f"Started processing: {self.source_path}")
+            if resuming:
+                file_logger.log(f"Resuming processing: {self.source_path} ({skipped_count} already done)")
+            else:
+                file_logger.log(f"Started processing: {self.source_path}")
 
             with FileProcessor(output_dir, logger=file_logger, write_exif=self.write_exif) as processor:
                 matcher = FileMatcher(scanner.file_index, self.suffixes)
 
-                total = len(scanner.jsons)
-                for i, json_path in enumerate(scanner.jsons):
+                total = len(jsons_to_process)
+                for i, json_path in enumerate(jsons_to_process):
                     if on_progress and i % 100 == 0:
                         on_progress(i, total, f"Processing: {os.path.basename(json_path)}")
 
@@ -229,6 +280,7 @@ class PEFOrchestrator:
                             "title": "Invalid JSON",
                             "time": time.strftime("%Y-%m-%d %H:%M:%S")
                         })
+                        state.mark_processed(json_path)
                         continue
 
                     match = matcher.find_match(json_path, metadata.title)
@@ -261,6 +313,9 @@ class PEFOrchestrator:
                             "title": metadata.title,
                             "time": time.strftime("%Y-%m-%d %H:%M:%S")
                         })
+
+                    # Mark this JSON as processed for resume capability
+                    state.mark_processed(json_path)
 
                 # Handle unmatched files
                 unmatched_files = [
@@ -301,98 +356,11 @@ class PEFOrchestrator:
             end_time=end_date
         )
 
+        # Mark processing as complete
+        state.complete()
+
         if on_progress:
             on_progress(total, total, "Processing complete")
-
-        return result
-
-    def extend(
-        self,
-        on_progress: Optional[ProgressCallback] = None
-    ) -> ProcessResult:
-        """Add metadata to already-processed files.
-
-        Args:
-            on_progress: Optional callback for progress updates.
-
-        Returns:
-            ProcessResult with statistics.
-        """
-        start_time = time.time()
-        start_date = time.strftime("%Y-%m-%d %H:%M:%S")
-
-        result = ProcessResult(
-            stats=ProcessingStats(),
-            output_dir=self.dest_path,
-            processed_dir=os.path.join(self.dest_path, "Processed"),
-            unprocessed_dir="",
-            log_file="",
-            elapsed_time=0,
-            start_time=start_date,
-            end_time=""
-        )
-
-        # Validate paths
-        if not exists(self.source_path):
-            result.errors.append(f"Source path does not exist: {self.source_path}")
-            return result
-
-        processed_path = result.processed_dir
-        if not exists(processed_path):
-            result.errors.append(f"Processed folder not found: {processed_path}")
-            return result
-
-        # Scan both directories
-        if on_progress:
-            on_progress(0, 100, "Scanning source...")
-
-        source_scanner = FileScanner(self.source_path)
-        source_scanner.scan()
-
-        if on_progress:
-            on_progress(0, 100, "Scanning processed files...")
-
-        dest_scanner = FileScanner(processed_path)
-        dest_scanner.scan()
-
-        # Process
-        matcher = FileMatcher(dest_scanner.file_index, self.suffixes)
-
-        with FileProcessor(self.dest_path, write_exif=True) as processor:
-            total = len(source_scanner.jsons)
-
-            for i, json_path in enumerate(source_scanner.jsons):
-                if on_progress and i % 100 == 0:
-                    on_progress(i, total, f"Extending: {os.path.basename(json_path)}")
-
-                metadata = self._read_json(json_path)
-                if not metadata or (not metadata.has_location() and not metadata.has_people()):
-                    result.stats.skipped += 1
-                    continue
-
-                match = matcher.find_match(json_path, metadata.title)
-                if match.found:
-                    any_success = False
-                    for file_info in match.files:
-                        if processor.extend_metadata(file_info.filepath, metadata):
-                            result.stats.processed += 1
-                            any_success = True
-                        else:
-                            result.stats.errors += 1
-                    # Count GPS/people per JSON, not per file
-                    if any_success:
-                        if metadata.has_location():
-                            result.stats.with_gps += 1
-                        if metadata.has_people():
-                            result.stats.with_people += 1
-                else:
-                    result.stats.skipped += 1
-
-        result.elapsed_time = round(time.time() - start_time, 3)
-        result.end_time = time.strftime("%Y-%m-%d %H:%M:%S")
-
-        if on_progress:
-            on_progress(total, total, "Extend complete")
 
         return result
 

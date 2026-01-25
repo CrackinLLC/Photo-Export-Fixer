@@ -1,7 +1,6 @@
 """Command-line interface for Photo Export Fixer."""
 
 import argparse
-import os
 import sys
 from typing import List, Optional
 
@@ -55,8 +54,7 @@ def create_progress_callback(desc: str = "Processing"):
 def run_dry_run(
     path: str,
     destination: Optional[str],
-    suffixes: List[str],
-    extend_mode: bool = False
+    suffixes: List[str]
 ) -> int:
     """Run dry-run mode.
 
@@ -64,7 +62,6 @@ def run_dry_run(
         path: Source path.
         destination: Optional destination path.
         suffixes: Filename suffixes.
-        extend_mode: If True, dry-run for extend mode.
 
     Returns:
         Exit code (0 for success).
@@ -78,12 +75,8 @@ def run_dry_run(
 
     dest = destination or f"{path}_pefProcessed"
 
-    if extend_mode:
-        print(f"Source JSONs: {path}")
-        print(f"Target files: {os.path.join(dest, 'Processed')}")
-    else:
-        print(f"Source: {path}")
-        print(f"Destination: {dest}")
+    print(f"Source: {path}")
+    print(f"Destination: {dest}")
 
     orchestrator = PEFOrchestrator(
         source_path=path,
@@ -103,14 +96,10 @@ def run_dry_run(
     print(f"  {result.json_count} JSON metadata files")
     print(f"  {result.file_count} media files")
 
-    if extend_mode:
-        print(f"\nWould update: {result.matched_count} files")
-        print(f"Would skip: {result.unmatched_json_count} (no metadata or no match)")
-    else:
-        print(f"\nWould process:")
-        print(f"  {result.matched_count} files with matching JSON")
-        print(f"  {result.unmatched_json_count} JSONs without matching file")
-        print(f"  {result.unmatched_file_count} files without matching JSON")
+    print(f"\nWould process:")
+    print(f"  {result.matched_count} files with matching JSON")
+    print(f"  {result.unmatched_json_count} JSONs without matching file")
+    print(f"  {result.unmatched_file_count} files without matching JSON")
 
     print(f"\nMetadata available:")
     print(f"  {result.with_gps} files with GPS coordinates")
@@ -129,7 +118,8 @@ def run_process(
     path: str,
     destination: Optional[str],
     suffixes: List[str],
-    write_exif: bool
+    write_exif: bool,
+    force: bool = False
 ) -> int:
     """Run main processing.
 
@@ -138,6 +128,7 @@ def run_process(
         destination: Optional destination path.
         suffixes: Filename suffixes.
         write_exif: Whether to write EXIF metadata.
+        force: If True, ignore existing state and start fresh.
 
     Returns:
         Exit code (0 for success).
@@ -159,7 +150,7 @@ def run_process(
     callback, pbar = create_progress_callback("Processing")
 
     try:
-        result = orchestrator.process(on_progress=callback)
+        result = orchestrator.process(on_progress=callback, force=force)
     finally:
         pbar.close()
 
@@ -179,59 +170,6 @@ def run_process(
     print(f"\nFolder with processed files:\n  {result.processed_dir}")
     print(f"Folder with unprocessed files:\n  {result.unprocessed_dir}")
     print(f"Logs saved in:\n  {result.log_file}")
-
-    return 0
-
-
-def run_extend(
-    path: str,
-    destination: Optional[str],
-    suffixes: List[str]
-) -> int:
-    """Run extend metadata mode.
-
-    Args:
-        path: Source path (with JSONs).
-        destination: Path to processed folder.
-        suffixes: Filename suffixes.
-
-    Returns:
-        Exit code (0 for success).
-    """
-    if not exists(path):
-        print(f"Error: Source path does not exist: {path}")
-        return 1
-
-    extend_path = destination or f"{path}_pefProcessed"
-
-    if not exists(extend_path):
-        print(f"Error: Processed folder not found at: {extend_path}")
-        print("Make sure you've run the main processing first.")
-        return 1
-
-    orchestrator = PEFOrchestrator(
-        source_path=path,
-        dest_path=extend_path,
-        suffixes=suffixes,
-        write_exif=True
-    )
-
-    print("\nExtend mode: Adding metadata to already-processed files...")
-
-    callback, pbar = create_progress_callback("Extending")
-
-    try:
-        result = orchestrator.extend(on_progress=callback)
-    finally:
-        pbar.close()
-
-    print(f"\nExtend complete!")
-    print(f"  Updated: {result.stats.processed} files")
-    print(f"    With GPS: {result.stats.with_gps}")
-    print(f"    With people: {result.stats.with_people}")
-    print(f"  Skipped: {result.stats.skipped} (no metadata or no match)")
-    print(f"  Errors: {result.stats.errors}")
-    print(f"Time used: {result.elapsed_time} seconds")
 
     return 0
 
@@ -273,8 +211,8 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "-e", "--extend",
-        help="Extend metadata on already-processed files",
+        "--force",
+        help="Start fresh, ignoring any previous processing state",
         action="store_true"
     )
 
@@ -319,14 +257,14 @@ def main(args: Optional[List[str]] = None) -> int:
     suffixes = parsed.suffix if parsed.suffix else DEFAULT_SUFFIXES
 
     # Dispatch to appropriate mode
-    if parsed.extend:
-        if parsed.dry_run:
-            return run_dry_run(path, destination, suffixes, extend_mode=True)
-        return run_extend(path, destination, suffixes)
-    elif parsed.dry_run:
+    if parsed.dry_run:
         return run_dry_run(path, destination, suffixes)
     else:
-        return run_process(path, destination, suffixes, write_exif=not parsed.no_exif)
+        return run_process(
+            path, destination, suffixes,
+            write_exif=not parsed.no_exif,
+            force=parsed.force
+        )
 
 
 if __name__ == "__main__":

@@ -10,7 +10,6 @@ from pef.cli.main import (
     create_progress_callback,
     run_dry_run,
     run_process,
-    run_extend,
     main,
 )
 
@@ -24,7 +23,7 @@ class TestParseArgs:
         assert args.path is None
         assert args.destination is None
         assert args.suffix is None
-        assert args.extend is False
+        assert args.force is False
         assert args.no_exif is False
         assert args.dry_run is False
 
@@ -59,15 +58,10 @@ class TestParseArgs:
         assert "modified" in args.suffix
         assert "backup" in args.suffix
 
-    def test_extend_flag(self):
-        args = parse_args(["--extend"])
+    def test_force_flag(self):
+        args = parse_args(["--force"])
 
-        assert args.extend is True
-
-    def test_extend_short_flag(self):
-        args = parse_args(["-e"])
-
-        assert args.extend is True
+        assert args.force is True
 
     def test_no_exif_flag(self):
         args = parse_args(["--no-exif"])
@@ -83,13 +77,13 @@ class TestParseArgs:
         args = parse_args([
             "-p", "/source",
             "-d", "/dest",
-            "--extend",
+            "--force",
             "--dry-run"
         ])
 
         assert args.path == "/source"
         assert args.destination == "/dest"
-        assert args.extend is True
+        assert args.force is True
         assert args.dry_run is True
 
 
@@ -152,28 +146,6 @@ class TestRunDryRun:
 
             assert result == 0
 
-    def test_extend_mode_flag(self, sample_takeout):
-        with patch('pef.cli.main.PEFOrchestrator') as MockOrch:
-            mock_instance = MagicMock()
-            mock_result = MagicMock()
-            mock_result.json_count = 5
-            mock_result.file_count = 3
-            mock_result.matched_count = 3
-            mock_result.unmatched_json_count = 2
-            mock_result.unmatched_file_count = 0
-            mock_result.with_gps = 2
-            mock_result.with_people = 1
-            mock_result.exiftool_available = False
-            mock_result.exiftool_path = None
-            mock_instance.dry_run.return_value = mock_result
-            MockOrch.return_value = mock_instance
-
-            result = run_dry_run(sample_takeout, None, [""], extend_mode=True)
-
-            # Should complete without error
-            assert result == 0
-
-
 class TestRunProcess:
     """Tests for run_process() function."""
 
@@ -211,50 +183,6 @@ class TestRunProcess:
             assert result == 0
 
 
-class TestRunExtend:
-    """Tests for run_extend() function."""
-
-    def test_returns_error_for_missing_source(self, temp_dir):
-        missing = os.path.join(temp_dir, "nonexistent")
-
-        result = run_extend(missing, None, ["", "-edited"])
-
-        assert result == 1
-
-    def test_returns_error_for_missing_processed_folder(self, sample_takeout, temp_dir):
-        # run_extend checks if output/Processed exists
-        # If the output doesn't exist at all, it should return error
-        missing_output = os.path.join(temp_dir, "nonexistent_output")
-
-        result = run_extend(sample_takeout, missing_output, ["", "-edited"])
-
-        assert result == 1
-
-    def test_returns_success_with_valid_paths(self, sample_takeout, temp_dir):
-        output = os.path.join(temp_dir, "output")
-        processed = os.path.join(output, "Processed")
-        os.makedirs(processed)
-
-        with patch('pef.cli.main.PEFOrchestrator') as MockOrch:
-            mock_instance = MagicMock()
-            mock_stats = MagicMock()
-            mock_stats.processed = 3
-            mock_stats.with_gps = 2
-            mock_stats.with_people = 1
-            mock_stats.skipped = 5
-            mock_stats.errors = 0
-
-            mock_result = MagicMock()
-            mock_result.stats = mock_stats
-            mock_result.elapsed_time = 1.5
-            mock_instance.extend.return_value = mock_result
-            MockOrch.return_value = mock_instance
-
-            result = run_extend(sample_takeout, output, ["", "-edited"])
-
-            assert result == 0
-
-
 class TestMain:
     """Tests for main() entry point."""
 
@@ -276,30 +204,14 @@ class TestMain:
             assert result == 0
             mock_dry_run.assert_called_once()
 
-    def test_extend_mode(self, sample_takeout, temp_dir):
-        output = os.path.join(temp_dir, "output")
-        processed = os.path.join(output, "Processed")
-        os.makedirs(processed)
+    def test_force_flag_passed_to_process(self, sample_takeout):
+        with patch('pef.cli.main.run_process') as mock_process:
+            mock_process.return_value = 0
 
-        with patch('pef.cli.main.run_extend') as mock_extend:
-            mock_extend.return_value = 0
+            main(["--path", sample_takeout, "--force"])
 
-            result = main(["--path", sample_takeout, "--extend", "-d", output])
-
-            assert result == 0
-            mock_extend.assert_called_once()
-
-    def test_extend_dry_run_mode(self, sample_takeout):
-        with patch('pef.cli.main.run_dry_run') as mock_dry_run:
-            mock_dry_run.return_value = 0
-
-            result = main(["--path", sample_takeout, "--extend", "--dry-run"])
-
-            assert result == 0
-            # Should call dry_run with extend_mode=True
-            mock_dry_run.assert_called_once()
-            _, kwargs = mock_dry_run.call_args
-            assert kwargs.get('extend_mode') is True
+            args, kwargs = mock_process.call_args
+            assert kwargs.get('force') is True or args[4] is True
 
     def test_process_mode(self, sample_takeout):
         with patch('pef.cli.main.run_process') as mock_process:

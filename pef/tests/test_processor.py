@@ -108,25 +108,6 @@ class TestFileProcessor:
 
             mock_instance.stop.assert_called_once()
 
-    def test_extend_metadata(self, output_dir, sample_file, sample_metadata):
-        # Copy file to output first
-        dest = os.path.join(output_dir, "photo.jpg")
-        with open(sample_file.filepath, "rb") as src:
-            with open(dest, "wb") as dst:
-                dst.write(src.read())
-
-        with patch('pef.core.processor.ExifToolManager') as MockManager:
-            mock_instance = MagicMock()
-            mock_instance.start.return_value = True
-            mock_instance.write_tags.return_value = True
-            MockManager.return_value = mock_instance
-
-            with FileProcessor(output_dir, write_exif=True) as processor:
-                result = processor.extend_metadata(dest, sample_metadata)
-
-            assert result is True
-            mock_instance.write_tags.assert_called()
-
 
 class TestCopyModify:
     """Tests for copy_modify() backwards-compatible function."""

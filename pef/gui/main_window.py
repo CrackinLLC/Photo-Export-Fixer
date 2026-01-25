@@ -107,14 +107,6 @@ class PEFMainWindow:
         )
         process_btn.pack(side=tk.LEFT, padx=5)
 
-        # Extend button
-        extend_btn = ttk.Button(
-            button_frame,
-            text="Extend Metadata",
-            command=self._on_extend
-        )
-        extend_btn.pack(side=tk.LEFT, padx=5)
-
         # Status bar
         self.status_var = tk.StringVar(value="Ready")
         status_bar = ttk.Label(
@@ -257,65 +249,6 @@ Output saved to:
 
         self.status_var.set(f"Complete: {result.stats.processed} files processed in {result.elapsed_time}s")
         messagebox.showinfo("Processing Complete", msg)
-
-    def _on_extend(self):
-        """Handle extend metadata button click."""
-        if not self._validate_source():
-            return
-
-        # Check processed folder exists
-        dest = self.dest_path.get() or f"{self.source_path.get()}_pefProcessed"
-        processed_path = os.path.join(dest, "Processed")
-
-        if not os.path.isdir(processed_path):
-            messagebox.showerror(
-                "Error",
-                f"Processed folder not found:\n{processed_path}\n\n"
-                "Run 'Process Files' first."
-            )
-            return
-
-        # Extend requires custom orchestrator config (write_exif=True always)
-        self.status_var.set("Extending metadata...")
-        progress = ProgressDialog(self.root, "Extending Metadata")
-
-        def run():
-            success = False
-            try:
-                orchestrator = PEFOrchestrator(
-                    source_path=self.source_path.get(),
-                    dest_path=dest,
-                    write_exif=True
-                )
-                progress_cb = lambda c, t, m: self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
-                result = orchestrator.extend(on_progress=progress_cb)
-                self.root.after(0, lambda: self._show_extend_results(result))
-                success = True
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
-            finally:
-                self.root.after(0, progress.close)
-                if not success:
-                    self.root.after(0, lambda: self.status_var.set("Ready"))
-
-        thread = threading.Thread(target=run, daemon=False)
-        thread.start()
-
-    def _show_extend_results(self, result):
-        """Show extend metadata results in a dialog."""
-        msg = f"""Extend Complete!
-
-Updated: {result.stats.processed} files
-  With GPS: {result.stats.with_gps}
-  With people: {result.stats.with_people}
-
-Skipped: {result.stats.skipped}
-Errors: {result.stats.errors}
-
-Time: {result.elapsed_time} seconds"""
-
-        self.status_var.set(f"Extend complete: {result.stats.processed} files updated in {result.elapsed_time}s")
-        messagebox.showinfo("Extend Complete", msg)
 
     def _on_close(self):
         """Handle window close - save settings."""
