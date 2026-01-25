@@ -1,11 +1,14 @@
 """File and directory scanning for Photo Export Fixer."""
 
+import logging
 import os
 import warnings
 from typing import List, Dict, Tuple, Optional, Iterator
 
 from pef.core.models import FileInfo, FileIndex, ProgressCallback
 from pef.core.utils import get_album_name
+
+logger = logging.getLogger(__name__)
 
 
 def _fast_walk(path: str) -> Iterator[Tuple[str, List[str], List[str]]]:
@@ -30,15 +33,16 @@ def _fast_walk(path: str) -> Iterator[Tuple[str, List[str], List[str]]]:
                         dirs.append(entry.name)
                     else:
                         files.append(entry.name)
-                except OSError:
-                    # Skip entries we can't access
+                except OSError as e:
+                    # Log and skip entries we can't access
+                    logger.debug(f"Cannot access entry {entry.path}: {e}")
                     continue
             yield path, dirs, files
             for d in dirs:
                 yield from _fast_walk(os.path.join(path, d))
-    except OSError:
-        # Skip directories we can't access
-        pass
+    except OSError as e:
+        # Log and skip directories we can't access
+        logger.debug(f"Cannot access directory {path}: {e}")
 
 
 class FileScanner:

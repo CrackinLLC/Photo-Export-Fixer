@@ -1,5 +1,6 @@
 """Data models for Photo Export Fixer."""
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List, Dict, Callable, Any, Tuple
@@ -33,8 +34,15 @@ class GeoData:
 
     @classmethod
     def from_dict(cls, data: Optional[Dict]) -> Optional["GeoData"]:
-        """Create from geoData dict, or None if invalid."""
-        if not data or (data.get("latitude", 0) == 0 and data.get("longitude", 0) == 0):
+        """Create from geoData dict, or None if missing/empty.
+
+        Note: (0,0) coordinates are valid (equator/prime meridian intersection)
+        and will be accepted. Only missing/None data is rejected.
+        """
+        if not data:
+            return None
+        # Check for required keys - latitude and longitude must be present
+        if "latitude" not in data or "longitude" not in data:
             return None
         return cls(
             latitude=data["latitude"],
@@ -43,8 +51,12 @@ class GeoData:
         )
 
     def is_valid(self) -> bool:
-        """Check if coordinates are meaningful (not 0,0)."""
-        return self.latitude != 0 or self.longitude != 0
+        """Check if coordinates are valid GPS values.
+
+        Note: (0,0) is a valid location (Gulf of Guinea, off coast of Africa).
+        This method checks for reasonable coordinate ranges.
+        """
+        return -90 <= self.latitude <= 90 and -180 <= self.longitude <= 180
 
 
 @dataclass(slots=True)
@@ -84,6 +96,17 @@ class JsonMetadata:
     def get_people_names(self) -> List[str]:
         """Get list of people names."""
         return [p.name for p in self.people]
+
+    @property
+    def filename(self) -> str:
+        """Get the filename from the filepath."""
+        return os.path.basename(self.filepath)
+
+    def get_coordinates_string(self) -> Optional[str]:
+        """Get GPS coordinates as 'lat,lng' string, or None if no location."""
+        if self.has_location():
+            return f"{self.geo_data.latitude},{self.geo_data.longitude}"
+        return None
 
 
 @dataclass

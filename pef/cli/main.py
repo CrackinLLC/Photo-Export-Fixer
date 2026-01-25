@@ -1,11 +1,13 @@
 """Command-line interface for Photo Export Fixer."""
 
 import argparse
+import shutil
 import sys
 from typing import List, Optional
 
 from tqdm import tqdm
 
+from pef import __version__
 from pef.core.orchestrator import PEFOrchestrator
 from pef.core.matcher import DEFAULT_SUFFIXES
 from pef.core.utils import exists, normalize_path
@@ -41,11 +43,18 @@ def create_progress_callback(desc: str = "Processing"):
     """
     pbar = tqdm(total=100, desc=desc)
 
+    # Calculate safe message width based on terminal size
+    terminal_width = shutil.get_terminal_size().columns
+    # Leave room for progress bar elements (percentage, bar, counts)
+    max_desc_width = max(20, min(80, terminal_width - 40))
+
     def callback(current: int, total: int, message: str):
         pbar.total = total
         pbar.n = current
-        # Truncate message to fit
-        pbar.set_description(message[:50] if len(message) > 50 else message)
+        # Truncate message to fit terminal
+        if len(message) > max_desc_width:
+            message = message[:max_desc_width - 3] + "..."
+        pbar.set_description(message)
         pbar.refresh()
 
     return callback, pbar
@@ -207,6 +216,12 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=DESCRIPTION,
         formatter_class=argparse.RawTextHelpFormatter
+    )
+
+    parser.add_argument(
+        "-V", "--version",
+        action="version",
+        version=f"%(prog)s {__version__}"
     )
 
     parser.add_argument(

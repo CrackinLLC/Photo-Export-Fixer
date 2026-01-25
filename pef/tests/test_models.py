@@ -31,16 +31,73 @@ class TestGeoData:
     def test_from_dict_none(self):
         assert GeoData.from_dict(None) is None
 
-    def test_from_dict_zero_coords(self):
-        data = {"latitude": 0, "longitude": 0}
+    def test_from_dict_empty_dict(self):
+        """Empty dict should return None."""
+        assert GeoData.from_dict({}) is None
+
+    def test_from_dict_missing_latitude(self):
+        """Missing latitude should return None."""
+        data = {"longitude": -74.0}
         assert GeoData.from_dict(data) is None
 
-    def test_is_valid(self):
+    def test_from_dict_missing_longitude(self):
+        """Missing longitude should return None."""
+        data = {"latitude": 40.7}
+        assert GeoData.from_dict(data) is None
+
+    def test_from_dict_zero_coords_are_valid(self):
+        """(0,0) is a valid location (Gulf of Guinea) and should be accepted."""
+        data = {"latitude": 0, "longitude": 0}
+        geo = GeoData.from_dict(data)
+
+        assert geo is not None
+        assert geo.latitude == 0
+        assert geo.longitude == 0
+
+    def test_from_dict_default_altitude(self):
+        """Missing altitude should default to 0."""
+        data = {"latitude": 40.7, "longitude": -74.0}
+        geo = GeoData.from_dict(data)
+
+        assert geo is not None
+        assert geo.altitude == 0.0
+
+    def test_is_valid_normal_coords(self):
         geo = GeoData(40.7, -74.0)
         assert geo.is_valid() is True
 
+    def test_is_valid_zero_coords(self):
+        """(0,0) is a valid GPS location."""
         geo_zero = GeoData(0, 0)
-        assert geo_zero.is_valid() is False
+        assert geo_zero.is_valid() is True
+
+    def test_is_valid_extreme_coords(self):
+        """Extreme but valid coordinates should be accepted."""
+        geo_north_pole = GeoData(90.0, 0.0)
+        geo_south_pole = GeoData(-90.0, 0.0)
+        geo_date_line = GeoData(0.0, 180.0)
+        geo_date_line_neg = GeoData(0.0, -180.0)
+
+        assert geo_north_pole.is_valid() is True
+        assert geo_south_pole.is_valid() is True
+        assert geo_date_line.is_valid() is True
+        assert geo_date_line_neg.is_valid() is True
+
+    def test_is_valid_rejects_invalid_latitude(self):
+        """Latitude outside -90 to 90 should be invalid."""
+        geo_too_high = GeoData(95.0, 0.0)
+        geo_too_low = GeoData(-95.0, 0.0)
+
+        assert geo_too_high.is_valid() is False
+        assert geo_too_low.is_valid() is False
+
+    def test_is_valid_rejects_invalid_longitude(self):
+        """Longitude outside -180 to 180 should be invalid."""
+        geo_too_high = GeoData(0.0, 185.0)
+        geo_too_low = GeoData(0.0, -185.0)
+
+        assert geo_too_high.is_valid() is False
+        assert geo_too_low.is_valid() is False
 
 
 class TestPerson:
@@ -101,6 +158,44 @@ class TestJsonMetadata:
             people=[Person("Alice"), Person("Bob")]
         )
         assert meta.get_people_names() == ["Alice", "Bob"]
+
+    def test_filename_property(self):
+        """Verify filename property extracts basename from filepath."""
+        meta = JsonMetadata(
+            filepath="/path/to/album/photo.jpg.json",
+            title="photo.jpg",
+            date=datetime.now()
+        )
+        assert meta.filename == "photo.jpg.json"
+
+    def test_get_coordinates_string_with_location(self):
+        """Verify get_coordinates_string returns formatted string."""
+        meta = JsonMetadata(
+            filepath="/test.json",
+            title="test.jpg",
+            date=datetime.now(),
+            geo_data=GeoData(40.7128, -74.0060)
+        )
+        assert meta.get_coordinates_string() == "40.7128,-74.006"
+
+    def test_get_coordinates_string_without_location(self):
+        """Verify get_coordinates_string returns None when no location."""
+        meta = JsonMetadata(
+            filepath="/test.json",
+            title="test.jpg",
+            date=datetime.now()
+        )
+        assert meta.get_coordinates_string() is None
+
+    def test_get_coordinates_string_zero_coords(self):
+        """Verify get_coordinates_string works for (0,0) location."""
+        meta = JsonMetadata(
+            filepath="/test.json",
+            title="test.jpg",
+            date=datetime.now(),
+            geo_data=GeoData(0.0, 0.0)
+        )
+        assert meta.get_coordinates_string() == "0.0,0.0"
 
 
 class TestProcessingStats:

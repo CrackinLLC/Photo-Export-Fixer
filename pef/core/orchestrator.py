@@ -452,10 +452,18 @@ class PEFOrchestrator:
             logger.debug(f"Error reading JSON {path}: {e}")
             return None
 
+    # Threshold for switching from sequential to parallel JSON reading.
+    # Below this, thread pool overhead outweighs benefits.
+    _PARALLEL_JSON_THRESHOLD = 50
+
+    # Default worker count for parallel JSON reading.
+    # 8 threads provides good I/O overlap without excessive context switching.
+    _DEFAULT_JSON_WORKERS = 8
+
     def _read_jsons_batch(
         self,
         paths: List[str],
-        max_workers: int = 8
+        max_workers: int = _DEFAULT_JSON_WORKERS
     ) -> Dict[str, Optional[JsonMetadata]]:
         """Read multiple JSON files concurrently using thread pool.
 
@@ -474,7 +482,7 @@ class PEFOrchestrator:
             return results
 
         # For small batches, sequential is faster due to thread overhead
-        if len(paths) < 50:
+        if len(paths) < self._PARALLEL_JSON_THRESHOLD:
             for path in paths:
                 results[path] = self._read_json(path)
             return results

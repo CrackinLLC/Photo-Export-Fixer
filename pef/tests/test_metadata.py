@@ -18,9 +18,15 @@ class TestBuildGpsTags:
     def test_none_returns_empty(self):
         assert build_gps_tags(None) == {}
 
-    def test_zero_coords_returns_empty(self):
+    def test_zero_coords_are_valid(self):
+        """(0,0) is a valid location (Gulf of Guinea) and should produce GPS tags."""
         geo = GeoData(0, 0)
-        assert build_gps_tags(geo) == {}
+        tags = build_gps_tags(geo)
+
+        assert tags["GPSLatitude"] == 0
+        assert tags["GPSLatitudeRef"] == "N"
+        assert tags["GPSLongitude"] == 0
+        assert tags["GPSLongitudeRef"] == "E"
 
     def test_positive_coords(self):
         geo = GeoData(40.7128, 74.0060, 10)
@@ -75,9 +81,15 @@ class TestBuildGpsTagsFromDict:
         assert "GPSLatitude" in tags
         assert tags["GPSLatitude"] == 40.7128
 
-    def test_zero_coords_returns_empty(self):
+    def test_zero_coords_are_valid(self):
+        """(0,0) is a valid location and should produce GPS tags."""
         geo_dict = {"latitude": 0, "longitude": 0}
-        assert build_gps_tags_from_dict(geo_dict) == {}
+        tags = build_gps_tags_from_dict(geo_dict)
+
+        assert tags["GPSLatitude"] == 0
+        assert tags["GPSLatitudeRef"] == "N"
+        assert tags["GPSLongitude"] == 0
+        assert tags["GPSLongitudeRef"] == "E"
 
 
 class TestBuildPeopleTags:

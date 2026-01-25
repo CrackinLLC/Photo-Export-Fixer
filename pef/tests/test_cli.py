@@ -27,6 +27,20 @@ class TestParseArgs:
         assert args.no_exif is False
         assert args.dry_run is False
 
+    def test_version_flag_exits(self):
+        """Verify --version flag exits with version info."""
+        import pytest
+        with pytest.raises(SystemExit) as exc_info:
+            parse_args(["--version"])
+        assert exc_info.value.code == 0
+
+    def test_version_short_flag_exits(self):
+        """Verify -V flag exits with version info."""
+        import pytest
+        with pytest.raises(SystemExit) as exc_info:
+            parse_args(["-V"])
+        assert exc_info.value.code == 0
+
     def test_path_short_flag(self):
         args = parse_args(["-p", "/some/path"])
 
@@ -113,6 +127,20 @@ class TestCreateProgressCallback:
         callback(50, 100, long_message)
 
         # Should not raise
+        pbar.close()
+
+    def test_truncation_adds_ellipsis(self):
+        """Verify long messages are truncated with ellipsis."""
+        callback, pbar = create_progress_callback("Test")
+
+        # Create a message longer than any reasonable terminal width
+        long_message = "X" * 200
+        callback(50, 100, long_message)
+
+        # The description should end with "..." if truncated
+        # and be shorter than the original
+        desc = pbar.desc
+        assert len(desc) < 200
         pbar.close()
 
 

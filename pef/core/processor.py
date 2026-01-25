@@ -38,7 +38,13 @@ class FileProcessor:
         print(processor.stats)
     """
 
+    # Number of metadata writes to batch before flushing to ExifTool.
+    # Higher values reduce process overhead but increase memory usage and
+    # delay between copy and metadata write.
     DEFAULT_BATCH_SIZE = 100
+
+    # Number of parallel workers for file copying.
+    # 4 workers provides good I/O overlap on SSDs without overwhelming the disk.
     DEFAULT_COPY_WORKERS = 4
 
     def __init__(
@@ -69,7 +75,7 @@ class FileProcessor:
         self.stats = ProcessingStats()
 
         self._exiftool: Optional[ExifToolManager] = None
-        self._pending_writes: List[Tuple[str, dict]] = []
+        self._pending_writes: List[Tuple[str, Dict[str, Any]]] = []
         self._batch_size = batch_size
         self._copy_workers = copy_workers
 
@@ -97,7 +103,7 @@ class FileProcessor:
         self.flush_metadata_writes()
         self.stop()
 
-    def _build_tags(self, metadata: JsonMetadata) -> dict:
+    def _build_tags(self, metadata: JsonMetadata) -> Dict[str, Any]:
         """Build EXIF tags dict from metadata.
 
         Args:
@@ -116,7 +122,7 @@ class FileProcessor:
 
         return tags
 
-    def queue_metadata_write(self, filepath: str, tags: dict) -> None:
+    def queue_metadata_write(self, filepath: str, tags: Dict[str, Any]) -> None:
         """Queue a metadata write for batch processing.
 
         When the queue reaches batch_size, it automatically flushes.
@@ -166,7 +172,7 @@ class FileProcessor:
             if not success:
                 errors += 1
                 filepath = batch[i][0] if i < len(batch) else "unknown"
-                logger.debug(f"Metadata write failed for: {filepath}")
+                logger.warning(f"Metadata write failed for: {filepath}")
 
         successes = len(results) - errors
 
@@ -191,7 +197,7 @@ class FileProcessor:
 
         Args:
             file: Source file info. Note: This object is mutated to set
-                  procpath and jsonpath attributes.
+                  output_path and json_path attributes.
             metadata: JSON metadata for this file.
 
         Returns:
@@ -460,6 +466,6 @@ def copy_modify(
             try:
                 exiftool_helper.set_tags(dest_path, tags)
             except Exception as e:
-                logger.debug(f"Failed to write EXIF to {dest_path}: {e}")
+                logger.warning(f"Failed to write EXIF to {dest_path}: {e}")
 
     return dest_path
