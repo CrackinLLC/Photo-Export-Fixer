@@ -49,7 +49,28 @@ If ExifTool isn't available, dates still get fixed—you just won't get the embe
 
 ## Usage
 
-### Basic Processing
+### Graphical Interface (GUI)
+
+For a point-and-click experience:
+
+```bash
+python pef_gui.py
+```
+
+Or with the main script:
+
+```bash
+python pef.py --gui
+```
+
+The GUI provides all the same options as the command line in an easy-to-use window. It works on Windows, macOS, and Linux.
+
+**Note for Linux users:** You may need to install tkinter separately:
+```bash
+sudo apt install python3-tk  # Ubuntu/Debian
+```
+
+### Command Line - Basic Processing
 
 ```bash
 python pef.py --path "/path/to/takeout"
@@ -261,7 +282,6 @@ Usually means a suffix matched files it shouldn't have. Be conservative with `-s
 
 ## Future Enhancements
 
-- **GUI** — Graphical interface for users who prefer not to use the command line
 - **Multi-service support** — Extend beyond Google Takeout to support exports from Amazon Photos, iCloud, Facebook, and other services. Each service has its own metadata format and directory structure, so this will use a provider-based architecture that can be extended for new services.
 
 ## Contributing
