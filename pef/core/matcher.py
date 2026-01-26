@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from pef.core.models import FileInfo, FileIndex
-from pef.core.utils import get_album_name
+from pef.core.utils import get_album_name, normalize_filename
 
 
 # Default suffixes that Google may add to filenames
@@ -89,6 +89,9 @@ class FileMatcher:
     def parse_title(self, title: str, json_path: str) -> ParsedTitle:
         """Parse a title into components, handling Google's quirks.
 
+        Normalizes the title to NFC for consistent matching across platforms
+        (macOS uses NFD, Windows/Linux use NFC).
+
         Args:
             title: The "title" field from JSON metadata.
             json_path: Path to the JSON file (used for bracket detection).
@@ -96,6 +99,8 @@ class FileMatcher:
         Returns:
             ParsedTitle with name, extension, and optional brackets.
         """
+        # Normalize title to NFC for consistent matching
+        title = normalize_filename(title)
         name, ext = os.path.splitext(title)
 
         # Handle Google's 51-character truncation
@@ -135,7 +140,8 @@ class FileMatcher:
         """
         index = file_index if file_index is not None else self.file_index
         parsed = self.parse_title(title, json_path)
-        album_name = get_album_name(json_path)
+        # Normalize album name to match normalized keys in file index
+        album_name = normalize_filename(get_album_name(json_path))
 
         # Tier 1: Fast matching (existing logic)
         result = self._tier1_match(parsed, album_name, index, json_path, title)
@@ -244,7 +250,8 @@ class FileMatcher:
         """
         index = file_index if file_index is not None else self.file_index
         parsed = self.parse_title(title, json_path)
-        album_name = get_album_name(json_path)
+        # Normalize album name to match normalized keys in file index
+        album_name = normalize_filename(get_album_name(json_path))
 
         all_files: List[FileInfo] = []
 

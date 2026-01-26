@@ -5,6 +5,7 @@ import os
 from typing import Dict, List, Tuple, Optional, Iterator
 
 from pef.core.models import FileInfo, FileIndex, ProgressCallback
+from pef.core.utils import normalize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,9 @@ class FileScanner:
         last_dir = ""
 
         for dirpath, dirnames, filenames in _fast_walk(self.path):
-            album_name = os.path.basename(dirpath)
+            # Normalize album name for consistent matching across platforms
+            # (macOS uses NFD, Windows/Linux use NFC)
+            album_name = normalize_filename(os.path.basename(dirpath))
 
             # Show directory change for immediate feedback
             if on_progress and dirpath != last_dir:
@@ -111,15 +114,17 @@ class FileScanner:
                 if filename.endswith(".json"):
                     self.jsons.append(filepath)
                 else:
+                    # Normalize filename for consistent matching across platforms
+                    normalized_filename = normalize_filename(filename)
                     file_info = FileInfo(
-                        filename=filename,
-                        filepath=filepath,
+                        filename=normalized_filename,
+                        filepath=filepath,  # Keep original path for file operations
                         album_name=album_name
                     )
                     self.files.append(file_info)
 
                     # Build index during scan (avoids second pass)
-                    key = (album_name, filename)
+                    key = (album_name, normalized_filename)
                     if key not in self.file_index:
                         self.file_index[key] = []
                     self.file_index[key].append(file_info)
@@ -144,9 +149,11 @@ class FileScanner:
 
         Note: This is now only used for rescanning. During initial scan,
         the index is built incrementally for better performance.
+        Filenames are already normalized when stored in FileInfo.
         """
         self.file_index = {}
         for file_info in self.files:
+            # filename and album_name are already NFC-normalized
             key = (file_info.album_name, file_info.filename)
             if key not in self.file_index:
                 self.file_index[key] = []

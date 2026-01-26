@@ -11,6 +11,7 @@ from pef import __version__
 from pef.core.orchestrator import PEFOrchestrator
 from pef.core.matcher import DEFAULT_SUFFIXES
 from pef.core.utils import exists, normalize_path
+from pef.core.exiftool import get_install_instructions
 from pef.cli.wizard import run_wizard
 
 
@@ -117,7 +118,8 @@ def run_dry_run(
     if result.exiftool_available:
         print(f"\nExifTool: Found at {result.exiftool_path}")
     else:
-        print("\nExifTool: Not found (GPS/people tags won't be written)")
+        print("\nExifTool: NOT FOUND")
+        print(get_install_instructions())
 
     print("\n=== END DRY RUN ===")
     return 0

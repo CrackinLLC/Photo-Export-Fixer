@@ -1,8 +1,33 @@
 """Utility functions for file and path operations."""
 
 import os
+import unicodedata
 from functools import lru_cache
 from typing import Optional
+
+
+def normalize_filename(filename: str) -> str:
+    """Normalize a filename to NFC form for consistent matching.
+
+    macOS filesystems use NFD (decomposed) Unicode normalization, while
+    Windows, Linux, and most cloud services use NFC (composed). This can
+    cause matching failures when the same filename has different byte
+    representations.
+
+    Example:
+        "Café.jpg" in NFC: C a f é . j p g  (é as single codepoint U+00E9)
+        "Café.jpg" in NFD: C a f e ́ . j p g  (e + combining accent U+0301)
+
+    These look identical but are different byte sequences. Normalizing
+    to NFC ensures consistent dictionary lookups regardless of source.
+
+    Args:
+        filename: Original filename (may be NFC or NFD).
+
+    Returns:
+        NFC-normalized filename.
+    """
+    return unicodedata.normalize("NFC", filename)
 
 
 def exists(path: Optional[str]) -> bool:

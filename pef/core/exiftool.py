@@ -19,6 +19,88 @@ EXIFTOOL_EXE = "exiftool.exe" if sys.platform == "win32" else "exiftool"
 _exiftool_path_cache: Optional[str] = None
 _exiftool_path_checked: bool = False
 
+# Platform-specific installation instructions
+# These provide copy/paste commands for users
+INSTALL_INSTRUCTIONS = {
+    "win32": """
+ExifTool is required for embedding GPS coordinates and people tags.
+Without it, PEF will still fix file dates, but won't write EXIF metadata.
+
+On Windows, ExifTool should download automatically. If that fails:
+
+  1. Download from: https://exiftool.org/
+     (Get the "Windows Executable" zip file)
+
+  2. Extract the zip file
+
+  3. Rename "exiftool(-k).exe" to "exiftool.exe"
+
+  4. Either:
+     - Place exiftool.exe in this project's ./tools/exiftool/ folder
+     - Or add its location to your system PATH
+""",
+    "darwin": """
+ExifTool is required for embedding GPS coordinates and people tags.
+Without it, PEF will still fix file dates, but won't write EXIF metadata.
+
+Install ExifTool using one of these methods:
+
+  Option 1 - Homebrew (recommended):
+  ----------------------------------
+  brew install exiftool
+
+  Option 2 - MacPorts:
+  --------------------
+  sudo port install p5-image-exiftool
+
+  Option 3 - Manual download:
+  ---------------------------
+  1. Download from: https://exiftool.org/
+  2. Extract the .tar.gz file
+  3. Move the extracted folder to /usr/local/bin/ or add to PATH
+
+After installing, verify with: exiftool -ver
+""",
+    "linux": """
+ExifTool is required for embedding GPS coordinates and people tags.
+Without it, PEF will still fix file dates, but won't write EXIF metadata.
+
+Install ExifTool using your package manager:
+
+  Ubuntu / Debian:
+  ----------------
+  sudo apt update
+  sudo apt install libimage-exiftool-perl
+
+  Fedora / RHEL / CentOS:
+  -----------------------
+  sudo dnf install perl-Image-ExifTool
+
+  Arch Linux:
+  -----------
+  sudo pacman -S perl-image-exiftool
+
+  openSUSE:
+  ---------
+  sudo zypper install exiftool
+
+After installing, verify with: exiftool -ver
+""",
+}
+
+
+def get_install_instructions() -> str:
+    """Get platform-specific ExifTool installation instructions.
+
+    Returns:
+        Multi-line string with installation instructions for the current platform.
+    """
+    platform = sys.platform
+    if platform.startswith("linux"):
+        platform = "linux"
+
+    return INSTALL_INSTRUCTIONS.get(platform, INSTALL_INSTRUCTIONS["linux"])
+
 
 def _reset_exiftool_cache() -> None:
     """Reset the ExifTool path cache. Used for testing."""
@@ -82,8 +164,9 @@ def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
                 _exiftool_path_checked = True
             return local_path
 
-    # Not found
-    logger.warning("ExifTool not found. Install from https://exiftool.org/")
+    # Not found - log warning but don't print full instructions here
+    # (let the CLI handle user-facing output)
+    logger.warning("ExifTool not found")
     if use_cache:
         _exiftool_path_cache = None
         _exiftool_path_checked = True
@@ -160,12 +243,19 @@ def auto_download_exiftool(base_dir: str) -> bool:
         return False
 
 
-def print_install_instructions() -> None:
-    """Print manual installation instructions."""
-    logger.info("ExifTool not found. Please install it:")
-    logger.info("  1. Download from https://exiftool.org/")
-    logger.info("  2. Extract and rename exiftool(-k).exe to exiftool.exe")
-    logger.info("  3. Place in PATH or in ./tools/exiftool/")
+def print_install_instructions(use_print: bool = False) -> None:
+    """Print platform-specific installation instructions.
+
+    Args:
+        use_print: If True, use print() for console output.
+                   If False, use logger.info() (default).
+    """
+    instructions = get_install_instructions()
+    for line in instructions.strip().split("\n"):
+        if use_print:
+            print(line)
+        else:
+            logger.info(line)
 
 
 def is_exiftool_available() -> bool:
