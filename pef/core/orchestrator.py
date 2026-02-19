@@ -174,7 +174,7 @@ class PEFOrchestrator:
         json_metadata = self._read_jsons_batch(scanner.jsons)
 
         # Phase 3: Analyze matches
-        matcher = FileMatcher(scanner.file_index, self.suffixes)
+        matcher = FileMatcher(scanner.file_index, self.suffixes, scanner.lowercase_index)
 
         total_jsons = len(scanner.jsons)
         interval = _adaptive_interval(total_jsons)
@@ -330,7 +330,7 @@ class PEFOrchestrator:
                 verbose=self.verbose,
                 rename_mp=self.rename_mp
             ) as processor:
-                matcher = FileMatcher(scanner.file_index, self.suffixes)
+                matcher = FileMatcher(scanner.file_index, self.suffixes, scanner.lowercase_index)
 
                 total = len(jsons_to_process)
                 interval = _adaptive_interval(total)
