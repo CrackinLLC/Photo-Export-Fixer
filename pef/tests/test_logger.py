@@ -1,6 +1,7 @@
 """Tests for pef.core.logger module."""
 
 import os
+from unittest.mock import patch, MagicMock
 
 from pef.core.logger import (
     BufferedLogger,
@@ -98,6 +99,93 @@ class TestBufferedLogger:
         logger.close()
 
         assert os.path.exists(os.path.join(temp_dir, "detailed_logs.txt"))
+
+
+class TestBufferedLoggerFlushSafety:
+    """Tests for BufferedLogger flush I/O error handling."""
+
+    def test_flush_writelines_failure_does_not_propagate(self, temp_dir):
+        """Verify writelines() IOError doesn't propagate to callers."""
+        logger = BufferedLogger(temp_dir, "test.log")
+        logger.log("Test message")
+
+        # Force open so we can mock the handle
+        logger._open()
+
+        with patch.object(logger._handle, 'writelines', side_effect=OSError("disk full")):
+            # Should NOT raise
+            logger.flush()
+
+        # Buffer should be discarded
+        assert len(logger._buffer) == 0
+        logger.close()
+
+    def test_flush_failure_discards_buffer(self, temp_dir):
+        """Verify buffer is cleared even when flush fails."""
+        logger = BufferedLogger(temp_dir, "test.log")
+        logger.log("Message 1")
+        logger.log("Message 2")
+        logger.log("Message 3")
+
+        logger._open()
+
+        with patch.object(logger._handle, 'writelines', side_effect=OSError("permission denied")):
+            logger.flush()
+
+        assert len(logger._buffer) == 0
+        logger.close()
+
+    def test_flush_failure_prints_to_stderr(self, temp_dir, capsys):
+        """Verify flush failure prints warning to stderr."""
+        logger = BufferedLogger(temp_dir, "test.log")
+        logger.log("Test message")
+
+        logger._open()
+
+        with patch.object(logger._handle, 'writelines', side_effect=OSError("disk full")):
+            logger.flush()
+
+        captured = capsys.readouterr()
+        assert "Logger flush failed" in captured.err
+        assert "disk full" in captured.err
+        logger.close()
+
+    def test_flush_handle_failure_does_not_propagate(self, temp_dir):
+        """Verify handle.flush() IOError doesn't propagate."""
+        logger = BufferedLogger(temp_dir, "test.log")
+        logger.log("Test message")
+
+        logger._open()
+
+        with patch.object(logger._handle, 'flush', side_effect=OSError("I/O error")):
+            # Should NOT raise
+            logger.flush()
+
+        assert len(logger._buffer) == 0
+        logger.close()
+
+    def test_logger_usable_after_flush_failure(self, temp_dir):
+        """Verify logger can still be used after a flush failure."""
+        logger = BufferedLogger(temp_dir, "test.log")
+        logger.log("First message")
+
+        logger._open()
+
+        # First flush fails
+        with patch.object(logger._handle, 'writelines', side_effect=OSError("temp error")):
+            logger.flush()
+
+        # Logger should still work for subsequent messages
+        logger.log("Second message")
+        logger.flush()
+
+        with open(os.path.join(temp_dir, "test.log")) as f:
+            content = f.read()
+
+        assert "Second message" in content
+        # First message was discarded
+        assert "First message" not in content
+        logger.close()
 
 
 class TestSummaryLogger:

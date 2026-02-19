@@ -362,34 +362,50 @@ class PEFMainWindow:
             self.exif_install_btn.pack(side=tk.LEFT, padx=(10, 0))
 
     def _try_install_exiftool(self):
-        """Attempt to install ExifTool (Windows only)."""
-        from pef.core.exiftool import auto_download_exiftool
-        import os
+        """Attempt to install ExifTool (Windows only).
 
+        Runs download in a background thread to keep the GUI responsive.
+        """
         self.status_var.set("Downloading ExifTool...")
-        self.root.update()
+        self.exif_install_btn.config(state="disabled")
 
-        # Get base directory (project root)
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        def download():
+            from pef.core.exiftool import auto_download_exiftool
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            return auto_download_exiftool(base_dir)
 
-        if auto_download_exiftool(base_dir):
-            # Re-check availability
-            from pef.core.exiftool import _reset_exiftool_cache
-            _reset_exiftool_cache()
-            self._check_exiftool()
-            if self._exiftool_available:
-                self.status_var.set("ExifTool installed successfully!")
-                messagebox.showinfo("Success", "ExifTool has been installed successfully!")
+        def on_result(success):
+            if not self.root.winfo_exists():
+                return
+            if success:
+                from pef.core.exiftool import _reset_exiftool_cache
+                _reset_exiftool_cache()
+                self._check_exiftool()
+                if self._exiftool_available:
+                    self.status_var.set("ExifTool installed successfully!")
+                    messagebox.showinfo("Success", "ExifTool has been installed successfully!")
+                else:
+                    self.status_var.set("Installation failed")
+                    self.exif_install_btn.config(state="normal")
+                    messagebox.showerror("Error", "ExifTool installation failed. Please install manually.")
             else:
                 self.status_var.set("Installation failed")
-                messagebox.showerror("Error", "ExifTool installation failed. Please install manually.")
-        else:
-            self.status_var.set("Installation failed")
-            messagebox.showerror(
-                "Installation Failed",
-                "Could not download ExifTool automatically.\n\n"
-                "Please download manually from https://exiftool.org/"
-            )
+                self.exif_install_btn.config(state="normal")
+                messagebox.showerror(
+                    "Installation Failed",
+                    "Could not download ExifTool automatically.\n\n"
+                    "Please download manually from https://exiftool.org/"
+                )
+
+        def run():
+            try:
+                success = download()
+            except Exception:
+                success = False
+            self.root.after(0, lambda: on_result(success))
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
 
     def _browse_source(self):
         """Open file dialog for source directory."""
@@ -454,18 +470,18 @@ class PEFMainWindow:
                     if now - last_update[0] < 0.12 and t > 0 and c < t:
                         return
                     last_update[0] = now
-                    self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
+                    self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m) if self.root.winfo_exists() else None)
 
                 result = operation(orchestrator, progress_cb)
-                self.root.after(0, lambda: on_complete(result))
+                self.root.after(0, lambda: on_complete(result) if self.root.winfo_exists() else None)
                 success = True
             except Exception as e:
                 error_msg = str(e)
-                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+                self.root.after(0, lambda: messagebox.showerror("Error", error_msg) if self.root.winfo_exists() else None)
             finally:
-                self.root.after(0, progress.close)
+                self.root.after(0, lambda: progress.close() if self.root.winfo_exists() else None)
                 if not success:
-                    self.root.after(0, lambda: self.status_var.set("Ready"))
+                    self.root.after(0, lambda: self.status_var.set("Ready") if self.root.winfo_exists() else None)
 
         thread = threading.Thread(target=run, daemon=True)
         thread.start()

@@ -195,6 +195,7 @@ class TestRunProcess:
             mock_stats.with_people = 1
             mock_stats.unmatched_files = 0
             mock_stats.unmatched_jsons = 2
+            mock_stats.errors = 0
 
             mock_result = MagicMock()
             mock_result.errors = []
@@ -300,6 +301,80 @@ class TestMainPathNormalization:
 
             args, _ = mock_process.call_args
             assert args[1] is not None
+
+
+class TestRunProcessExitCodes:
+    """Tests for CLI exit codes when processing has errors."""
+
+    def test_returns_2_when_stats_errors(self, sample_takeout, temp_dir):
+        """Verify exit code 2 when result.stats.errors > 0."""
+        from pef.core.models import ProcessRunResult, ProcessingStats
+
+        mock_result = ProcessRunResult(
+            stats=ProcessingStats(processed=10, errors=3),
+            output_dir=temp_dir,
+            pef_dir=os.path.join(temp_dir, "_pef"),
+            summary_file=os.path.join(temp_dir, "_pef", "summary.txt"),
+            elapsed_time=5.0,
+            start_time="2024-01-01 00:00:00",
+            end_time="2024-01-01 00:00:05",
+        )
+
+        with patch('pef.cli.main.PEFOrchestrator') as MockOrch:
+            mock_orch = MagicMock()
+            mock_orch.process.return_value = mock_result
+            MockOrch.return_value = mock_orch
+
+            result = run_process(sample_takeout, temp_dir, ["", "-edited"], write_exif=False)
+
+        assert result == 2
+
+    def test_returns_2_when_result_errors_list(self, sample_takeout, temp_dir):
+        """Verify exit code 2 when result.errors is non-empty."""
+        from pef.core.models import ProcessRunResult, ProcessingStats
+
+        mock_result = ProcessRunResult(
+            stats=ProcessingStats(processed=10),
+            output_dir=temp_dir,
+            pef_dir=os.path.join(temp_dir, "_pef"),
+            summary_file=os.path.join(temp_dir, "_pef", "summary.txt"),
+            elapsed_time=5.0,
+            start_time="2024-01-01 00:00:00",
+            end_time="2024-01-01 00:00:05",
+        )
+        mock_result.errors = ["Error processing file X"]
+
+        with patch('pef.cli.main.PEFOrchestrator') as MockOrch:
+            mock_orch = MagicMock()
+            mock_orch.process.return_value = mock_result
+            MockOrch.return_value = mock_orch
+
+            result = run_process(sample_takeout, temp_dir, ["", "-edited"], write_exif=False)
+
+        assert result == 2
+
+    def test_returns_0_when_no_errors(self, sample_takeout, temp_dir):
+        """Verify exit code 0 when no errors."""
+        from pef.core.models import ProcessRunResult, ProcessingStats
+
+        mock_result = ProcessRunResult(
+            stats=ProcessingStats(processed=10),
+            output_dir=temp_dir,
+            pef_dir=os.path.join(temp_dir, "_pef"),
+            summary_file=os.path.join(temp_dir, "_pef", "summary.txt"),
+            elapsed_time=5.0,
+            start_time="2024-01-01 00:00:00",
+            end_time="2024-01-01 00:00:05",
+        )
+
+        with patch('pef.cli.main.PEFOrchestrator') as MockOrch:
+            mock_orch = MagicMock()
+            mock_orch.process.return_value = mock_result
+            MockOrch.return_value = mock_orch
+
+            result = run_process(sample_takeout, temp_dir, ["", "-edited"], write_exif=False)
+
+        assert result == 0
 
 
 class TestRunProcessInterrupt:
