@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "den": {
+      "command": "node",
+      "args": [
+        "D:\\Photos\\Photo-Export-Fixer\\.forgecrew\\bin\\mcp\\den-server.js"
+      ]
+    },
+    "pride": {
+      "command": "node",
+      "args": [
+        "D:\\Photos\\Photo-Export-Fixer\\.forgecrew\\bin\\mcp\\pride-server.js"
+      ]
+    }
+  }
+}

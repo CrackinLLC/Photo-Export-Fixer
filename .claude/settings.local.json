@@ -16,5 +16,10 @@
       "Bash(ls:*)",
       "Bash(powershell:*)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "den",
+    "pride"
+  ],
+  "enableAllProjectMcpServers": true
 }

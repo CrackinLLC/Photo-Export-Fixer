@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "project": {
+    "name": "Photo-Export-Fixer",
+    "owner": "Dave (BigDog)",
+    "github": {
+      "org": "CrackinLLC",
+      "repo": "Photo-Export-Fixer"
+    }
+  },
+  "setup": {
+    "commands": [
+      "pip install -r requirements.txt"
+    ],
+    "copyFiles": [],
+    "envFiles": []
+  },
+  "check": {
+    "commands": [],
+    "packages": []
+  },
+  "scripts": {
+    "build": "npm run build"
+  },
+  "den": {
+    "defaultBase": "main"
+  },
+  "pride": {
+    "worktreePattern": "{repo}-{agent}",
+    "worktreeParent": ".",
+    "autoRebaseOnCheckin": true,
+    "autoSetupOnCheckin": true,
+    "warningBlacklist": []
+  },
+  "docs": {
+    "baseDir": "forgecrew",
+    "stateDirs": [
+      "intake",
+      "prep",
+      "tasks",
+      "review",
+      "_archive"
+    ],
+    "processDirs": [
+      "roles",
+      "standards"
+    ]
+  },
+  "_forgecrewVersion": "0.3.12"
+}

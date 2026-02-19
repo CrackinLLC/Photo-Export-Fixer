@@ -172,3 +172,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# >>> ForgeCrew (managed - do not edit) >>>
+# ForgeCrew local installation (untracked)
+.forgecrew/
+forgecrew-work/*
+.codex/
+# <<< ForgeCrew <<<

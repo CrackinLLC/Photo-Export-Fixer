@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__den",
+      "mcp__pride",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean:*)",
+      "Bash(git checkout -- :*)",
+      "Bash(rm -rf:*)",
+      "Bash(rm -r:*)",
+      "Bash(sudo:*)",
+      "Bash(rmdir /s:*)",
+      "Bash(del /s:*)",
+      "Bash(rd /s:*)",
+      "Bash(runas:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(**/secrets/**)",
+      "Read(**/.aws/**)",
+      "Read(**/credentials*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Bash(rm *forgecrew/work*)",
+      "Bash(rm *.forgecrew*)",
+      "Bash(rm -r *forgecrew/work*)",
+      "Bash(rm -r *.forgecrew*)",
+      "Bash(rmdir *forgecrew/work*)",
+      "Bash(rmdir *.forgecrew*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true
+}
