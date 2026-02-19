@@ -69,10 +69,17 @@ class Person:
 
     @classmethod
     def from_list(cls, data: Optional[List[Dict]]) -> List["Person"]:
-        """Create list from people array."""
+        """Create list from people array.
+
+        Filters out entries where name is missing, empty, or whitespace-only.
+        """
         if not data:
             return []
-        return [cls(name=p["name"]) for p in data if "name" in p]
+        return [
+            cls(name=name)
+            for p in data
+            if (name := p.get("name", "").strip())
+        ]
 
 
 @dataclass

@@ -102,6 +102,20 @@ class TestBuildPeopleTags:
         assert "日本語" in tags["PersonInImage"]
         assert "Müller" in tags["PersonInImage"]
 
+    def test_no_empty_entries_after_filtering(self):
+        """Verify build_people_tags produces clean output with filtered Person list."""
+        # Simulate what Person.from_list would produce after filtering
+        people = Person.from_list([
+            {"name": "Alice"}, {"name": ""}, {"name": "  "}, {"name": "Bob"}
+        ])
+        tags = build_people_tags(people)
+
+        assert tags["PersonInImage"] == ["Alice", "Bob"]
+        assert tags["Keywords"] == ["Alice", "Bob"]
+        assert tags["Subject"] == ["Alice", "Bob"]
+        assert tags["XPKeywords"] == "Alice;Bob"
+        assert "" not in tags["PersonInImage"]
+
 
 class TestBuildAllTags:
     """Tests for build_all_tags() function."""
