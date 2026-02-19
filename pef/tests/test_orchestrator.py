@@ -625,34 +625,16 @@ class TestUnmatchedFileCopyIOErrors:
 
         output_dir = os.path.join(temp_dir, "output")
 
-        # Make copy_unmatched_file raise on the second file
-        call_count = 0
-        original_method = None
-
-        def failing_copy(file_info, reason="No matching JSON found"):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 2:
-                raise OSError("disk full")
-            return original_method(file_info, reason)
-
         with patch('pef.core.processor.filedate'):
             with patch('pef.core.processor.ExifToolManager'):
                 orchestrator = PEFOrchestrator(
                     temp_dir, dest_path=output_dir, write_exif=False
                 )
 
-                # We need to intercept copy_unmatched_file on the processor instance
-                # Use a simpler approach: patch shutil.copy to fail on one specific call
-                copy_count = 0
                 import shutil as shutil_mod
                 orig_copy = shutil_mod.copy
 
                 def selective_copy_fail(src, dst):
-                    nonlocal copy_count
-                    copy_count += 1
-                    # Fail on the 5th copy call (the 2nd unmatched file)
-                    # First copies are for matched files in process phase
                     if "photo1" in src:
                         raise OSError("disk full")
                     return orig_copy(src, dst)
@@ -660,9 +642,9 @@ class TestUnmatchedFileCopyIOErrors:
                 with patch('pef.core.processor.shutil.copy', side_effect=selective_copy_fail):
                     result = orchestrator.process()
 
-                # Should have errors recorded but processing should complete
-                assert len(result.errors) >= 1
-                assert any("disk full" in str(e) for e in result.errors)
+                # Error counted in stats, processing continued for other files
+                assert result.stats.errors == 1
+                assert result.stats.unmatched_files == 2  # 2 of 3 succeeded
 
 
 class TestPEFOrchestratorSaveProgress:
