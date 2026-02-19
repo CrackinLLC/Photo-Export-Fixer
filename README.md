@@ -261,6 +261,24 @@ This is handled by default. Check if there's a different pattern in your unproce
 
 Should auto-download on first run. If that fails, manually download from [exiftool.org](https://exiftool.org/) and place it in `./tools/exiftool/`.
 
+### Windows: "File not found" errors with long paths
+
+Windows has a default path length limit of 260 characters. Google Takeout exports with deeply nested albums and long Unicode filenames can exceed this limit.
+
+PEF automatically adds the `\\?\` extended-length prefix for paths that approach this limit, which allows paths up to ~32,767 characters. This works transparently with no action required.
+
+Alternatively, you can enable long path support system-wide:
+
+1. Open **Registry Editor** (regedit)
+2. Navigate to `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\FileSystem`
+3. Set `LongPathsEnabled` to `1`
+4. Restart your computer
+
+Or run this from an elevated PowerShell:
+```powershell
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
+```
+
 ### Processing is slow
 
 - Use `--no-exif` if you only need date correction (significantly faster)

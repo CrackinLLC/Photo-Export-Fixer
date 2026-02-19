@@ -1,7 +1,9 @@
 """Tests for pef.core.utils module."""
 
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from unittest.mock import patch
 
 import pytest
 
@@ -182,3 +184,44 @@ class TestNormalizePath:
     def test_expands_home(self):
         result = normalize_path("~/photos")
         assert "~" not in result
+
+    @patch("pef.core.utils.sys")
+    def test_long_path_gets_prefix_on_windows(self, mock_sys):
+        """Paths >= 260 chars get \\\\?\\ prefix on Windows."""
+        mock_sys.platform = "win32"
+        # Build a path that exceeds 260 chars
+        long_path = "C:\\Users\\test\\" + "a" * 250 + "\\file.txt"
+        assert len(long_path) >= 260
+
+        result = normalize_path(long_path)
+        assert result.startswith("\\\\?\\")
+
+    @patch("pef.core.utils.sys")
+    def test_short_path_no_prefix_on_windows(self, mock_sys):
+        """Paths < 260 chars should NOT get \\\\?\\ prefix."""
+        mock_sys.platform = "win32"
+        short_path = "C:\\Users\\test\\file.txt"
+        assert len(short_path) < 260
+
+        result = normalize_path(short_path)
+        assert not result.startswith("\\\\?\\")
+
+    @patch("pef.core.utils.sys")
+    def test_no_prefix_on_non_windows(self, mock_sys):
+        """Long paths on non-Windows should NOT get \\\\?\\ prefix."""
+        mock_sys.platform = "linux"
+        long_path = "/home/test/" + "a" * 260 + "/file.txt"
+        assert len(long_path) >= 260
+
+        result = normalize_path(long_path)
+        assert not result.startswith("\\\\?\\")
+
+    @patch("pef.core.utils.sys")
+    def test_no_double_prefix(self, mock_sys):
+        """Already-prefixed paths should not get double prefix."""
+        mock_sys.platform = "win32"
+        prefixed_path = "\\\\?\\" + "C:\\Users\\test\\" + "a" * 250 + "\\file.txt"
+
+        result = normalize_path(prefixed_path)
+        assert not result.startswith("\\\\?\\\\\\?\\")
+        assert result.startswith("\\\\?\\")
