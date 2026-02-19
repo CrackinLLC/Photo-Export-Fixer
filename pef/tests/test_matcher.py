@@ -52,12 +52,57 @@ class TestFileMatcher:
         assert result.extension == ".jpg"
         assert result.duplicate_suffix is None
 
-    def test_parse_title_long_name(self, simple_index):
+    def test_parse_title_long_ascii_name(self, simple_index):
+        """ASCII-only filename >51 chars — verify byte-based truncation (same as codepoint for ASCII)."""
         matcher = FileMatcher(simple_index)
-        long_name = "a" * 50 + ".jpg"  # 54 chars
+        long_name = "a" * 50 + ".jpg"  # 54 bytes / 54 chars
         result = matcher.parse_title(long_name, "/Album1/test.json")
 
-        assert len(result.name + result.extension) == 51
+        full = result.name + result.extension
+        assert len(full.encode("utf-8")) == 51
+
+    def test_parse_title_cjk_truncation(self, simple_index):
+        """CJK filename exceeding 51 UTF-8 bytes but under 51 codepoints — verify byte-based truncation."""
+        matcher = FileMatcher(simple_index)
+        # Each CJK char is 3 UTF-8 bytes. 16 chars = 48 bytes + ".jpg" (4 bytes) = 52 bytes > 51
+        cjk_name = "\u4e00" * 16 + ".jpg"
+        result = matcher.parse_title(cjk_name, "/Album1/test.json")
+
+        full = result.name + result.extension
+        # Budget for name = 51 - 4 (.jpg) = 47 bytes. 47 // 3 = 15 chars = 45 bytes
+        assert len(full.encode("utf-8")) <= 51
+        assert result.name == "\u4e00" * 15  # 15 CJK chars fit in 45 bytes
+
+    def test_parse_title_emoji_truncation(self, simple_index):
+        """Emoji filename (4-byte chars) — verify truncation at valid UTF-8 boundary."""
+        matcher = FileMatcher(simple_index)
+        # Each emoji is 4 UTF-8 bytes. 13 emojis = 52 bytes + ".jpg" (4 bytes) = 56 bytes
+        emoji_name = "\U0001F600" * 13 + ".jpg"
+        result = matcher.parse_title(emoji_name, "/Album1/test.json")
+
+        full = result.name + result.extension
+        assert len(full.encode("utf-8")) <= 51
+        # Budget = 47 bytes, 47 // 4 = 11 emojis = 44 bytes
+        assert result.name == "\U0001F600" * 11
+
+    def test_parse_title_mixed_ascii_cjk_truncation(self, simple_index):
+        """Mixed ASCII/CJK filename — verify correct truncation point."""
+        matcher = FileMatcher(simple_index)
+        # "hello" (5 bytes) + 16 CJK chars (48 bytes) = 53 bytes + ".jpg" (4) = 57 bytes
+        mixed_name = "hello" + "\u4e00" * 16 + ".jpg"
+        result = matcher.parse_title(mixed_name, "/Album1/test.json")
+
+        full = result.name + result.extension
+        assert len(full.encode("utf-8")) <= 51
+        # Budget = 47 bytes. "hello" = 5 bytes, remaining = 42 bytes, 42 // 3 = 14 CJK chars
+        assert result.name == "hello" + "\u4e00" * 14
+
+    def test_parse_title_no_truncation_under_limit(self, simple_index):
+        """Short filename should not be truncated."""
+        matcher = FileMatcher(simple_index)
+        result = matcher.parse_title("short.jpg", "/Album1/test.json")
+        assert result.name == "short"
+        assert result.extension == ".jpg"
 
     def test_parse_title_with_brackets(self, simple_index):
         matcher = FileMatcher(simple_index)
