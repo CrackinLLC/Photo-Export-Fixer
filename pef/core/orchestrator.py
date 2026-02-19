@@ -392,6 +392,12 @@ class PEFOrchestrator:
                         continue
 
                     for file_info, dest_path, error in batch_results:
+                        if error and error.startswith("Error:"):
+                            # Copy failed — don't mark as matched so file
+                            # falls through to Phase 3 unmatched copy
+                            result.errors.append(f"Error processing {file_info.filepath}: {error}")
+                            continue
+
                         matched_file_paths.add(file_info.filepath)
                         json_path = file_to_json_path.get(file_info.filepath, "")
 
@@ -401,11 +407,7 @@ class PEFOrchestrator:
                             "output_path": dest_path,
                             "json_path": json_path
                         })
-
-                        if error and error.startswith("Error:"):
-                            result.errors.append(f"Error processing {file_info.filepath}: {error}")
-                        else:
-                            jsons_with_success.add(json_path)
+                        jsons_with_success.add(json_path)
 
                     done = min(batch_start + self._COPY_BATCH_SIZE, total_files)
                     if on_progress:
