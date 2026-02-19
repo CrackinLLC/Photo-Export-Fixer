@@ -103,9 +103,18 @@ class FileMatcher:
         title = normalize_filename(title)
         name, ext = os.path.splitext(title)
 
-        # Handle Google's 51-character truncation
-        if len(name + ext) > self.MAX_FILENAME_LENGTH:
-            name = name[:self.MAX_FILENAME_LENGTH - len(ext)]
+        # Handle Google's 51 UTF-8 byte truncation
+        # Google Takeout truncates at 51 UTF-8 bytes, not 51 codepoints.
+        # For multi-byte characters (CJK, emoji), we must truncate by
+        # byte length and back up to the last valid UTF-8 boundary.
+        ext_bytes = len(ext.encode("utf-8"))
+        name_bytes = len(name.encode("utf-8"))
+        if name_bytes + ext_bytes > self.MAX_FILENAME_LENGTH:
+            budget = self.MAX_FILENAME_LENGTH - ext_bytes
+            # Truncate name to fit within byte budget without splitting
+            # a multi-byte character
+            encoded = name.encode("utf-8")[:budget]
+            name = encoded.decode("utf-8", errors="ignore")
 
         # Detect duplicate naming convention from JSON path
         # e.g., "photo.jpg(1).json" means the file is "photo(1).jpg"
