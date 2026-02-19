@@ -1,6 +1,7 @@
 """Tests for pef.core.processor module."""
 
 import os
+import shutil
 from datetime import datetime
 from unittest.mock import patch, MagicMock
 
@@ -238,6 +239,117 @@ class TestFileProcessorErrorHandling:
 
                 assert processor.stats.errors == 1
                 assert processor.stats.processed == 1  # File still processed
+
+
+class TestCopyIOErrorHandling:
+    """Tests for shutil.copy() I/O error handling in FileProcessor."""
+
+    @pytest.fixture
+    def source_file(self, temp_dir):
+        """Create a source file for testing."""
+        album = os.path.join(temp_dir, "source", "Album")
+        os.makedirs(album)
+        filepath = os.path.join(album, "photo.jpg")
+        with open(filepath, "wb") as f:
+            f.write(b"fake jpg data")
+        return FileInfo("photo.jpg", filepath, "Album")
+
+    @pytest.fixture
+    def sample_metadata(self):
+        """Create sample metadata for testing."""
+        return JsonMetadata(
+            filepath="/source/Album/photo.jpg.json",
+            title="photo.jpg",
+            date=datetime(2021, 1, 1, 12, 0, 0),
+        )
+
+    def test_process_file_copy_failure_increments_errors(self, temp_dir, source_file, sample_metadata):
+        """Verify process_file handles shutil.copy OSError gracefully."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.shutil.copy', side_effect=OSError("disk full")):
+                with FileProcessor(output_dir, write_exif=False) as processor:
+                    result = processor.process_file(source_file, sample_metadata)
+
+                    assert result == ""
+                    assert processor.stats.errors == 1
+                    assert processor.stats.processed == 0
+                    assert source_file.output_path is None
+
+    def test_process_file_copy_failure_does_not_set_output_path(self, temp_dir, source_file, sample_metadata):
+        """Verify failed copy does not mark file as processed."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.shutil.copy', side_effect=OSError("permission denied")):
+                with FileProcessor(output_dir, write_exif=False) as processor:
+                    processor.process_file(source_file, sample_metadata)
+
+                    # output_path should NOT be set on failure
+                    assert source_file.output_path is None
+
+    def test_copy_unmatched_file_failure_increments_errors(self, temp_dir, source_file):
+        """Verify copy_unmatched_file handles shutil.copy OSError gracefully."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.shutil.copy', side_effect=OSError("disk full")):
+            with FileProcessor(output_dir, write_exif=False) as processor:
+                result = processor.copy_unmatched_file(source_file)
+
+                assert result == ""
+                assert processor.stats.errors == 1
+                assert processor.stats.unmatched_files == 0
+
+    def test_copy_unmatched_file_failure_does_not_set_output_path(self, temp_dir, source_file):
+        """Verify failed unmatched copy does not set output_path."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.shutil.copy', side_effect=OSError("path too long")):
+            with FileProcessor(output_dir, write_exif=False) as processor:
+                processor.copy_unmatched_file(source_file)
+
+                assert source_file.output_path is None
+
+    def test_process_file_continues_after_copy_failure(self, temp_dir, sample_metadata):
+        """Verify processing continues for subsequent files after a copy failure."""
+        album = os.path.join(temp_dir, "source", "Album")
+        os.makedirs(album, exist_ok=True)
+
+        # Create two source files
+        filepath1 = os.path.join(album, "photo1.jpg")
+        filepath2 = os.path.join(album, "photo2.jpg")
+        with open(filepath1, "wb") as f:
+            f.write(b"data1")
+        with open(filepath2, "wb") as f:
+            f.write(b"data2")
+
+        file1 = FileInfo("photo1.jpg", filepath1, "Album")
+        file2 = FileInfo("photo2.jpg", filepath2, "Album")
+
+        output_dir = os.path.join(temp_dir, "output")
+
+        # First copy fails, second succeeds
+        call_count = 0
+        original_copy = shutil.copy
+
+        def selective_fail(src, dst):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise OSError("disk full")
+            return original_copy(src, dst)
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.shutil.copy', side_effect=selective_fail):
+                with FileProcessor(output_dir, write_exif=False) as processor:
+                    processor.process_file(file1, sample_metadata)
+                    processor.process_file(file2, sample_metadata)
+
+                    assert processor.stats.errors == 1
+                    assert processor.stats.processed == 1
+                    assert file1.output_path is None
+                    assert file2.output_path is not None
 
 
 class TestFileProcessorBatching:

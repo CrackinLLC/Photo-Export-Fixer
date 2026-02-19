@@ -247,7 +247,14 @@ class FileProcessor:
         # Copy file
         if self.logger and self.verbose:
             self.logger.log(f"Copying: {file.filepath} -> {dest_path}")
-        shutil.copy(file.filepath, dest_path)
+        try:
+            shutil.copy(file.filepath, dest_path)
+        except OSError as e:
+            logger.warning(f"Failed to copy {file.filepath}: {e}")
+            if self.logger:
+                self.logger.log(f"Error: Failed to copy {file.filepath}: {e}")
+            self.stats.errors += 1
+            return ""
 
         # Set file dates
         try:
@@ -427,7 +434,14 @@ class FileProcessor:
         # Copy file
         if self.logger and self.verbose:
             self.logger.log(f"Copying unprocessed: {file.filepath}")
-        shutil.copy(file.filepath, dest_path)
+        try:
+            shutil.copy(file.filepath, dest_path)
+        except OSError as e:
+            logger.warning(f"Failed to copy unmatched file {file.filepath}: {e}")
+            if self.logger:
+                self.logger.log(f"Error: Failed to copy unmatched file {file.filepath}: {e}")
+            self.stats.errors += 1
+            return ""
 
         file.output_path = dest_path
         self.stats.unmatched_files += 1
