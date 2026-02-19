@@ -496,6 +496,13 @@ class PEFOrchestrator:
             if "photoTakenTime" not in content or "timestamp" not in content["photoTakenTime"]:
                 return None
 
+            # Timestamp conversion: Google Takeout stores photoTakenTime as a UTC
+            # epoch (seconds since 1970-01-01 00:00:00 UTC). We convert to local time
+            # using datetime.fromtimestamp(), which applies the system's local timezone.
+            # This means the same export processed in different timezones will produce
+            # different dates. This is intentional: users expect file dates to match
+            # their local clock at the time the photo was taken. For UTC-consistent
+            # dates, use datetime.fromtimestamp(ts, tz=timezone.utc) instead.
             return JsonMetadata(
                 filepath=path,
                 title=content["title"],

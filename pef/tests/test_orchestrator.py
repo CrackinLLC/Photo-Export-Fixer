@@ -2,6 +2,7 @@
 
 import os
 import json
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 import pytest
@@ -431,6 +432,31 @@ class TestPEFOrchestratorReadJson:
         result = orchestrator._read_json(json_path)
 
         assert result is None
+
+    def test_timestamp_converts_utc_epoch_to_local_datetime(self, temp_dir):
+        """Verify UTC epoch timestamp is converted to local datetime.
+
+        Google Takeout stores photoTakenTime as UTC epoch seconds.
+        datetime.fromtimestamp() converts this to the system's local timezone.
+        We use a known epoch and verify it matches the expected local datetime.
+        """
+        # 1609459200 = 2021-01-01 00:00:00 UTC
+        epoch = 1609459200
+        expected_local = datetime.fromtimestamp(epoch)
+
+        json_path = os.path.join(temp_dir, "test.json")
+        json_data = {
+            "title": "photo.jpg",
+            "photoTakenTime": {"timestamp": str(epoch)},
+        }
+        with open(json_path, "w") as f:
+            json.dump(json_data, f)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        result = orchestrator._read_json(json_path)
+
+        assert result is not None
+        assert result.date == expected_local
 
 
 @pytest.mark.integration
