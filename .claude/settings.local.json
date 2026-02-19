@@ -23,19 +23,10 @@
       "Bash(forgecrew-dev:*)",
       "Bash(gh:*)",
       "Bash(npm test:*)",
-      "Bash(npm run test:*)",
-      "Bash(npm run:*)",
-      "Bash(tsc:*)",
-      "Bash(prettier:*)",
-      "Bash(eslint:*)"
+      "Bash(npm run test:*)"
     ]
   },
-  "enabledMcpjsonServers": [
-    "den",
-    "pride"
-  ],
+  "enabledMcpjsonServers": ["den", "pride"],
   "enableAllProjectMcpServers": true,
-  "additionalDirectories": [
-    "../Photo-Export-Fixer"
-  ]
+  "additionalDirectories": ["../Photo-Export-Fixer"]
 }
