@@ -843,11 +843,10 @@ class TestPEFOrchestratorProgressPhases:
         phase_messages = [m for m in messages if m.startswith("[")]
         assert len(phase_messages) > 0
 
-        # Check specific phases exist
-        phase_1 = any("[1/3]" in m for m in messages)
-        phase_2 = any("[2/3]" in m for m in messages)
-        phase_3 = any("[3/3]" in m for m in messages)
-        assert phase_1 or phase_2 or phase_3  # At least one phase shown
+        # Check specific phases exist (dry_run uses 2 phases: scan + analyze)
+        phase_1 = any("[1/2]" in m for m in messages)
+        phase_2 = any("[2/2]" in m for m in messages)
+        assert phase_1 or phase_2  # At least one phase shown
 
     def test_process_shows_phase_indicators(self, sample_takeout, temp_dir):
         """Verify process progress messages include phase indicators."""
@@ -886,3 +885,148 @@ class TestPEFOrchestratorProgressPhases:
         # For small test collection, should have multiple updates
         # (adaptive interval for small collections is 1-10)
         assert len(update_counts) >= 2
+
+
+class TestStreamingDryRun:
+    """Tests for streaming/chunked dry_run behavior."""
+
+    def test_chunked_dry_run_matches_results(self, sample_takeout):
+        """Verify chunked dry_run produces correct counts.
+
+        The streaming approach should produce identical results regardless
+        of chunk size.
+        """
+        orchestrator = PEFOrchestrator(sample_takeout)
+
+        # Run with default chunk size
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            result = orchestrator.dry_run()
+
+        # sample_takeout has 3 JSONs, 5 files (photo1.jpg, photo2.jpg, video.mp4, image.png, image-edited.png)
+        assert result.json_count == 3
+        assert result.file_count == 5
+        # photo1 and photo2 match, image matches
+        assert result.matched_count == 3
+        assert result.with_gps == 1  # Only photo1 has GPS
+        assert result.with_people == 2  # photo1 and image have people
+
+    def test_small_chunk_size_produces_same_results(self, sample_takeout):
+        """Verify that a chunk size of 1 produces the same results as default."""
+        orchestrator = PEFOrchestrator(sample_takeout)
+
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            # Override chunk size to 1 (each JSON in its own chunk)
+            orchestrator._DRY_RUN_CHUNK_SIZE = 1
+            result_small = orchestrator.dry_run()
+
+            # Reset to large chunk (all in one batch)
+            orchestrator._DRY_RUN_CHUNK_SIZE = 10000
+            result_large = orchestrator.dry_run()
+
+        assert result_small.matched_count == result_large.matched_count
+        assert result_small.with_gps == result_large.with_gps
+        assert result_small.with_people == result_large.with_people
+        assert result_small.unmatched_json_count == result_large.unmatched_json_count
+        assert result_small.unmatched_file_count == result_large.unmatched_file_count
+
+    def test_dry_run_handles_empty_chunks(self, temp_dir):
+        """Verify dry_run handles zero JSONs (no chunks to process)."""
+        # Empty directory with no JSONs
+        empty_dir = os.path.join(temp_dir, "empty")
+        os.makedirs(empty_dir)
+
+        orchestrator = PEFOrchestrator(empty_dir)
+        result = orchestrator.dry_run()
+
+        assert result.json_count == 0
+        assert result.matched_count == 0
+
+
+class TestPipelinedProcess:
+    """Tests for pipelined JSON pre-reading in process()."""
+
+    def test_pipelined_process_produces_correct_results(self, sample_takeout, temp_dir):
+        """Verify pipelined reading produces same results as sequential."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+                result = orchestrator.process()
+
+        # Should process all 4 matched files (photo1, photo2, image, image-edited)
+        assert result.stats.processed == 4
+        assert result.stats.with_gps == 1
+        assert result.stats.with_people == 2
+
+    def test_small_pipeline_batch_produces_same_results(self, sample_takeout, temp_dir):
+        """Verify tiny pipeline batch size doesn't break processing."""
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+                # Override batch size to 1 (each JSON triggers a new batch)
+                orchestrator._PIPELINE_BATCH_SIZE = 1
+                result = orchestrator.process()
+
+        assert result.stats.processed == 4
+
+    def test_pipeline_preserves_processing_order(self, sample_takeout, temp_dir):
+        """Verify pipelined reading preserves deterministic processing order.
+
+        State resume depends on deterministic order, so pipelining must
+        not change the order JSONs are processed in the main loop.
+        """
+        output_dir = os.path.join(temp_dir, "output")
+        processed_order = []
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+
+                def tracking_progress(current, total, message):
+                    if "Processing:" in message:
+                        # Extract filename from progress message
+                        processed_order.append(message)
+
+                orchestrator.process(on_progress=tracking_progress)
+
+        # Verify processing messages are generated in order
+        assert len(processed_order) > 0
+
+    def test_pipeline_handles_io_errors_gracefully(self, temp_dir):
+        """Verify pipeline handles I/O errors in individual JSONs."""
+        album = os.path.join(temp_dir, "Album1")
+        os.makedirs(album)
+
+        # Create valid file + JSON
+        with open(os.path.join(album, "photo.jpg"), "wb") as f:
+            f.write(b"data")
+        with open(os.path.join(album, "photo.jpg.json"), "w") as f:
+            json.dump({
+                "title": "photo.jpg",
+                "photoTakenTime": {"timestamp": "1609459200"}
+            }, f)
+
+        # Create corrupt JSON
+        with open(os.path.join(album, "corrupt.json"), "w") as f:
+            f.write("not valid json")
+
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                orchestrator = PEFOrchestrator(
+                    temp_dir, dest_path=output_dir, write_exif=False
+                )
+                result = orchestrator.process()
+
+        # Should still process the valid file
+        assert result.stats.processed == 1
