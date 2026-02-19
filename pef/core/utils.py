@@ -1,9 +1,13 @@
 """Utility functions for file and path operations."""
 
 import os
+import sys
 import unicodedata
 from functools import lru_cache
 from typing import Optional
+
+# Windows MAX_PATH limit (260 chars including null terminator)
+_WIN_MAX_PATH = 260
 
 
 def normalize_filename(filename: str) -> str:
@@ -150,6 +154,11 @@ def normalize_path(path: str) -> str:
     - Mixed forward/backward slashes
     - User home directory (~)
     - Leading/trailing whitespace
+    - Windows long path prefix (\\\\?\\) for paths approaching MAX_PATH (260 chars)
+
+    On Windows, paths at or above 260 characters can fail with standard APIs.
+    This function adds the \\\\?\\ extended-length prefix when needed, which
+    requires a fully resolved absolute path (no relative segments).
 
     Args:
         path: Path to normalize.
@@ -157,4 +166,12 @@ def normalize_path(path: str) -> str:
     Returns:
         Normalized path.
     """
-    return os.path.normpath(os.path.expanduser(path.strip()))
+    result = os.path.normpath(os.path.expanduser(path.strip()))
+
+    if sys.platform == "win32" and len(result) >= _WIN_MAX_PATH:
+        # \\?\ prefix requires an absolute path with no relative segments
+        result = os.path.abspath(result)
+        if not result.startswith("\\\\?\\"):
+            result = "\\\\?\\" + result
+
+    return result
