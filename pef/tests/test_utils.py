@@ -1,6 +1,7 @@
 """Tests for pef.core.utils module."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 
@@ -67,6 +68,32 @@ class TestGetUniquePath:
 
         result = get_unique_path(subdir, is_dir=True)
         assert result == os.path.join(temp_dir, "subdir(1)")
+
+    def test_creates_placeholder_file(self, temp_dir):
+        """Verify get_unique_path creates an empty placeholder file."""
+        path = os.path.join(temp_dir, "new_file.txt")
+        result = get_unique_path(path)
+        assert result == path
+        assert os.path.exists(path)
+        assert os.path.getsize(path) == 0
+
+    def test_concurrent_same_destination_no_overwrites(self, temp_dir):
+        """Verify concurrent calls for the same path produce unique paths."""
+        base_path = os.path.join(temp_dir, "photo.jpg")
+        num_threads = 20
+
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [
+                executor.submit(get_unique_path, base_path)
+                for _ in range(num_threads)
+            ]
+            results = [f.result() for f in as_completed(futures)]
+
+        # All paths must be unique
+        assert len(set(results)) == num_threads
+        # All paths must exist on disk (placeholder files)
+        for path in results:
+            assert os.path.exists(path)
 
 
 class TestCheckoutDir:

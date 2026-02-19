@@ -345,7 +345,13 @@ class FileProcessor:
                 for task in tasks
             }
 
-            # Collect results as they complete
+            # Collect results as they complete.
+            # Thread safety note: stats mutations (processed, errors) and
+            # metadata queue writes happen here in the main thread's
+            # as_completed() loop, NOT inside worker threads. Workers only
+            # perform I/O (copy + date set) and return results. This means
+            # no locking is needed for shared state — the main thread is
+            # the sole writer.
             for future in as_completed(future_to_task):
                 file, metadata, dest_path = future_to_task[future]
                 try:
