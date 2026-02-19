@@ -70,6 +70,7 @@ class FileScanner:
         self.jsons: List[str] = []
         self.files: List[FileInfo] = []
         self.file_index: FileIndex = {}
+        self.lowercase_index: FileIndex = {}
         self._scanned = False
 
     def scan(self, on_progress: Optional[ProgressCallback] = None) -> None:
@@ -88,6 +89,7 @@ class FileScanner:
         self.jsons = []
         self.files = []
         self.file_index = {}
+        self.lowercase_index = {}
 
         # Single-pass scanning using fast_walk (no double traversal)
         files_found = 0
@@ -129,6 +131,12 @@ class FileScanner:
                         self.file_index[key] = []
                     self.file_index[key].append(file_info)
 
+                    # Build lowercase index for case-insensitive fallback
+                    lower_key = (album_name.lower(), normalized_filename.lower())
+                    if lower_key not in self.lowercase_index:
+                        self.lowercase_index[lower_key] = []
+                    self.lowercase_index[lower_key].append(file_info)
+
                 files_found += 1
 
                 # Update progress periodically
@@ -152,12 +160,18 @@ class FileScanner:
         Filenames are already normalized when stored in FileInfo.
         """
         self.file_index = {}
+        self.lowercase_index = {}
         for file_info in self.files:
             # filename and album_name are already NFC-normalized
             key = (file_info.album_name, file_info.filename)
             if key not in self.file_index:
                 self.file_index[key] = []
             self.file_index[key].append(file_info)
+
+            lower_key = (file_info.album_name.lower(), file_info.filename.lower())
+            if lower_key not in self.lowercase_index:
+                self.lowercase_index[lower_key] = []
+            self.lowercase_index[lower_key].append(file_info)
 
     @property
     def json_count(self) -> int:

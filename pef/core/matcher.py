@@ -75,16 +75,19 @@ class FileMatcher:
     def __init__(
         self,
         file_index: FileIndex,
-        suffixes: Optional[List[str]] = None
+        suffixes: Optional[List[str]] = None,
+        lowercase_index: Optional[FileIndex] = None
     ):
         """Initialize matcher.
 
         Args:
             file_index: Index from FileScanner, mapping (album, filename) to FileInfo list.
             suffixes: List of suffixes to try (default: ["", "-edited"]).
+            lowercase_index: Optional lowercase-keyed index for case-insensitive fallback.
         """
         self.file_index = file_index
         self.suffixes = suffixes if suffixes is not None else DEFAULT_SUFFIXES
+        self.lowercase_index = lowercase_index
 
     def parse_title(self, title: str, json_path: str) -> ParsedTitle:
         """Parse a title into components, handling Google's quirks.
@@ -137,6 +140,7 @@ class FileMatcher:
         Uses tiered matching:
         - Tier 1: Fast matching (exact, suffix, bracket from JSON path)
         - Tier 2: Extended matching (suffix + bracket combinations)
+        - Tier 3: Case-insensitive fallback (lowercase index)
 
         Args:
             json_path: Path to the JSON metadata file.
@@ -158,7 +162,15 @@ class FileMatcher:
             return result
 
         # Tier 2: Extended matching for suffix+bracket combinations
-        return self._tier2_match(parsed, album_name, index, json_path, title)
+        result = self._tier2_match(parsed, album_name, index, json_path, title)
+        if result.found:
+            return result
+
+        # Tier 3: Case-insensitive fallback
+        if self.lowercase_index is not None:
+            return self._tier3_match(parsed, album_name, json_path, title)
+
+        return MatchResult(found=False, files=[], json_path=json_path, title=title)
 
     def _tier1_match(
         self,
@@ -234,6 +246,34 @@ class FileMatcher:
             json_path=json_path,
             title=title
         )
+
+    def _tier3_match(
+        self,
+        parsed: ParsedTitle,
+        album_name: str,
+        json_path: str,
+        title: str
+    ) -> MatchResult:
+        """Tier 3: Case-insensitive fallback using lowercase index.
+
+        Tried only after Tier 1 and Tier 2 fail. Uses the lowercase index
+        to find files where casing differs between JSON title and filesystem.
+        """
+        lower_album = album_name.lower()
+
+        for suffix in self.suffixes:
+            filename = parsed.build_filename(suffix)
+            lower_key = (lower_album, filename.lower())
+
+            if lower_key in self.lowercase_index:
+                return MatchResult(
+                    found=True,
+                    files=self.lowercase_index[lower_key],
+                    json_path=json_path,
+                    title=title
+                )
+
+        return MatchResult(found=False, files=[], json_path=json_path, title=title)
 
     def find_all_related_files(
         self,

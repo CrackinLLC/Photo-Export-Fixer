@@ -223,6 +223,78 @@ class TestFileMatcherWithAlternateIndex:
         assert result.files[0].filename == "photo-edited.jpg"
 
 
+class TestTier3CaseInsensitiveMatching:
+    """Tests for Tier 3 case-insensitive matching fallback."""
+
+    def test_case_insensitive_match(self):
+        """Match 'IMG_001.JPG' title against file indexed as 'img_001.jpg'."""
+        file_index = {
+            ("Album1", "img_001.jpg"): [
+                FileInfo("img_001.jpg", "/path/Album1/img_001.jpg", "Album1")
+            ],
+        }
+        lowercase_index = {
+            ("album1", "img_001.jpg"): [
+                FileInfo("img_001.jpg", "/path/Album1/img_001.jpg", "Album1")
+            ],
+        }
+        matcher = FileMatcher(file_index, lowercase_index=lowercase_index)
+        result = matcher.find_match("/path/Album1/IMG_001.JPG.json", "IMG_001.JPG")
+
+        assert result.found is True
+        assert result.files[0].filename == "img_001.jpg"
+
+    def test_exact_match_preferred_over_case_insensitive(self):
+        """When both 'Photo.jpg' and 'photo.jpg' exist, title 'Photo.jpg' gets exact match."""
+        file_index = {
+            ("Album1", "Photo.jpg"): [
+                FileInfo("Photo.jpg", "/path/Album1/Photo.jpg", "Album1")
+            ],
+            ("Album1", "photo.jpg"): [
+                FileInfo("photo.jpg", "/path/Album1/photo.jpg", "Album1")
+            ],
+        }
+        lowercase_index = {
+            ("album1", "photo.jpg"): [
+                FileInfo("Photo.jpg", "/path/Album1/Photo.jpg", "Album1"),
+                FileInfo("photo.jpg", "/path/Album1/photo.jpg", "Album1"),
+            ],
+        }
+        matcher = FileMatcher(file_index, lowercase_index=lowercase_index)
+        result = matcher.find_match("/path/Album1/Photo.jpg.json", "Photo.jpg")
+
+        assert result.found is True
+        # Exact match from Tier 1, not case-insensitive from Tier 3
+        assert len(result.files) == 1
+        assert result.files[0].filename == "Photo.jpg"
+
+    def test_no_lowercase_index_skips_tier3(self):
+        """Without lowercase_index, Tier 3 is skipped and match fails."""
+        file_index = {
+            ("Album1", "img_001.jpg"): [
+                FileInfo("img_001.jpg", "/path/Album1/img_001.jpg", "Album1")
+            ],
+        }
+        matcher = FileMatcher(file_index)
+        result = matcher.find_match("/path/Album1/IMG_001.JPG.json", "IMG_001.JPG")
+
+        assert result.found is False
+
+    def test_case_insensitive_with_suffix(self):
+        """Case-insensitive match works with suffix variations."""
+        file_index = {}
+        lowercase_index = {
+            ("album1", "photo-edited.jpg"): [
+                FileInfo("photo-edited.jpg", "/path/Album1/photo-edited.jpg", "Album1")
+            ],
+        }
+        matcher = FileMatcher(file_index, suffixes=["", "-edited"], lowercase_index=lowercase_index)
+        result = matcher.find_match("/path/Album1/PHOTO.JPG.json", "PHOTO.JPG")
+
+        assert result.found is True
+        assert result.files[0].filename == "photo-edited.jpg"
+
+
 class TestDefaultSuffixes:
     """Tests for DEFAULT_SUFFIXES constant."""
 
