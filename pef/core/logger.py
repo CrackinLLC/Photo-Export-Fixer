@@ -1,6 +1,7 @@
 """Logging utilities for Photo Export Fixer."""
 
 import os
+import sys
 import time
 from typing import Optional, TextIO, List, Dict, Any, Union
 
@@ -70,12 +71,20 @@ class BufferedLogger:
             self.flush()
 
     def flush(self) -> None:
-        """Flush the log buffer to disk."""
+        """Flush the log buffer to disk.
+
+        On I/O failure, discards the buffer and prints a warning to stderr.
+        Logger failures must never propagate to processing callers.
+        """
         if self._buffer:
-            self._open()  # Lazy open on first flush
-            self._handle.writelines(self._buffer)
-            self._buffer.clear()
-            self._handle.flush()
+            try:
+                self._open()  # Lazy open on first flush
+                self._handle.writelines(self._buffer)
+                self._handle.flush()
+            except OSError as e:
+                print(f"Warning: Logger flush failed ({e}), discarding {len(self._buffer)} log entries", file=sys.stderr)
+            finally:
+                self._buffer.clear()
 
     def close(self) -> None:
         """Close the log file, flushing any remaining buffer."""

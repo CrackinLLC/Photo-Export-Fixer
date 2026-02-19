@@ -208,6 +208,10 @@ def run_process(
     print(f"\nOutput directory:\n  {result.output_dir}")
     print(f"Logs and metadata:\n  {result.pef_dir}")
 
+    # Return non-zero if there were errors during processing
+    if result.stats.errors > 0 or result.errors:
+        return 2
+
     return 0
 
 
