@@ -350,85 +350,84 @@ class PEFOrchestrator:
 
                 # Pipeline: pre-read the next batch while processing current batch.
                 # This overlaps I/O with processing for better throughput.
-                pipeline_executor = ThreadPoolExecutor(max_workers=1)
-                prefetch_future = None
+                # Context manager ensures executor cleanup on exceptions.
+                with ThreadPoolExecutor(max_workers=1) as pipeline_executor:
+                    prefetch_future = None
 
-                # Kick off pre-read of first batch
-                first_batch = jsons_to_process[:batch_size]
-                if first_batch:
-                    prefetch_future = pipeline_executor.submit(
-                        self._read_jsons_batch, first_batch
-                    )
-
-                for i, json_path in enumerate(jsons_to_process):
-                    if on_progress and i % interval == 0:
-                        on_progress(i, total, f"[2/3] Processing: {os.path.basename(json_path)}")
-
-                    # Periodic flush of batched metadata writes for progress visibility
-                    if i > 0 and i % 500 == 0:
-                        processor.flush_metadata_writes()
-
-                    # At each batch boundary, collect pre-read results and
-                    # kick off pre-read of the next batch
-                    if i % batch_size == 0:
-                        # Collect the pre-read batch
-                        if prefetch_future is not None:
-                            current_batch_metadata = prefetch_future.result()
-                        else:
-                            current_batch_metadata = {}
-
-                        # Start pre-reading the next batch
-                        next_start = i + batch_size
-                        if next_start < total:
-                            next_batch = jsons_to_process[next_start:next_start + batch_size]
-                            prefetch_future = pipeline_executor.submit(
-                                self._read_jsons_batch, next_batch
-                            )
-                        else:
-                            prefetch_future = None
-
-                    metadata = current_batch_metadata.get(json_path)
-                    if not metadata:
-                        # Invalid JSON - still save it to unmatched_data
-                        unmatched_jsons.append(json_path)
-                        self._active_state.mark_processed(json_path)
-                        continue
-
-                    # Use find_all_related_files to get original AND all edited variants
-                    match = matcher.find_all_related_files(json_path, metadata.title)
-                    if match.found:
-                        any_success = False
-                        for file_info in match.files:
-                            try:
-                                dest = processor.process_file(file_info, metadata)
-                                matched_file_paths.add(file_info.filepath)
-                                processed_files.append({
-                                    "filename": file_info.filename,
-                                    "filepath": file_info.filepath,
-                                    "output_path": dest,
-                                    "json_path": json_path
-                                })
-                                any_success = True
-                            except Exception as e:
-                                result.errors.append(f"Error processing {file_info.filepath}: {e}")
-                        # Count GPS/people per JSON, not per file
-                        if any_success:
-                            if metadata.has_location():
-                                processor.stats.with_gps += 1
-                            if metadata.has_people():
-                                processor.stats.with_people += 1
-                    else:
-                        # Valid Takeout JSON but no matching media file found
-                        logger.debug(
-                            "No matching media file for Takeout JSON (title=%s): %s",
-                            metadata.title, json_path
+                    # Kick off pre-read of first batch
+                    first_batch = jsons_to_process[:batch_size]
+                    if first_batch:
+                        prefetch_future = pipeline_executor.submit(
+                            self._read_jsons_batch, first_batch
                         )
-                        unmatched_jsons.append(json_path)
 
-                    # Mark this JSON as processed for resume capability
-                    self._active_state.mark_processed(json_path)
+                    for i, json_path in enumerate(jsons_to_process):
+                        if on_progress and i % interval == 0:
+                            on_progress(i, total, f"[2/3] Processing: {os.path.basename(json_path)}")
 
-                pipeline_executor.shutdown(wait=False)
+                        # Periodic flush of batched metadata writes for progress visibility
+                        if i > 0 and i % 500 == 0:
+                            processor.flush_metadata_writes()
+
+                        # At each batch boundary, collect pre-read results and
+                        # kick off pre-read of the next batch
+                        if i % batch_size == 0:
+                            # Collect the pre-read batch
+                            if prefetch_future is not None:
+                                current_batch_metadata = prefetch_future.result()
+                            else:
+                                current_batch_metadata = {}
+
+                            # Start pre-reading the next batch
+                            next_start = i + batch_size
+                            if next_start < total:
+                                next_batch = jsons_to_process[next_start:next_start + batch_size]
+                                prefetch_future = pipeline_executor.submit(
+                                    self._read_jsons_batch, next_batch
+                                )
+                            else:
+                                prefetch_future = None
+
+                        metadata = current_batch_metadata.get(json_path)
+                        if not metadata:
+                            # Invalid JSON - still save it to unmatched_data
+                            unmatched_jsons.append(json_path)
+                            self._active_state.mark_processed(json_path)
+                            continue
+
+                        # Use find_all_related_files to get original AND all edited variants
+                        match = matcher.find_all_related_files(json_path, metadata.title)
+                        if match.found:
+                            any_success = False
+                            for file_info in match.files:
+                                try:
+                                    dest = processor.process_file(file_info, metadata)
+                                    matched_file_paths.add(file_info.filepath)
+                                    processed_files.append({
+                                        "filename": file_info.filename,
+                                        "filepath": file_info.filepath,
+                                        "output_path": dest,
+                                        "json_path": json_path
+                                    })
+                                    any_success = True
+                                except Exception as e:
+                                    result.errors.append(f"Error processing {file_info.filepath}: {e}")
+                            # Count GPS/people per JSON, not per file
+                            if any_success:
+                                if metadata.has_location():
+                                    processor.stats.with_gps += 1
+                                if metadata.has_people():
+                                    processor.stats.with_people += 1
+                        else:
+                            # Valid Takeout JSON but no matching media file found
+                            logger.debug(
+                                "No matching media file for Takeout JSON (title=%s): %s",
+                                metadata.title, json_path
+                            )
+                            unmatched_jsons.append(json_path)
+
+                        # Mark this JSON as processed for resume capability
+                        self._active_state.mark_processed(json_path)
 
                 # Phase 3: Handle unmatched files (copy all, track as unprocessed)
                 unmatched_files = [
