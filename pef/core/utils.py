@@ -47,6 +47,14 @@ def exists(path: Optional[str]) -> bool:
 def get_unique_path(path: str, is_dir: bool = False) -> str:
     """Get a unique path by appending (n) suffix if path exists.
 
+    For files, uses os.open() with O_CREAT | O_EXCL to atomically reserve
+    the path. This prevents race conditions when multiple threads call this
+    function concurrently for the same destination — each thread is
+    guaranteed a distinct path without needing external locking.
+
+    The created placeholder file is empty and will be overwritten by the
+    caller (e.g., shutil.copy).
+
     Args:
         path: Desired path.
         is_dir: True if path is a directory, False for files.
@@ -68,13 +76,26 @@ def get_unique_path(path: str, is_dir: bool = False) -> str:
             n += 1
         return f"{path}({n})"
     else:
-        if not os.path.isfile(path):
+        # Use O_CREAT | O_EXCL for atomic file reservation.
+        # This fails with FileExistsError if the path already exists,
+        # guaranteeing no two callers can claim the same path.
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
             return path
+        except FileExistsError:
+            pass
+
         base, ext = os.path.splitext(path)
         n = 1
-        while os.path.isfile(f"{base}({n}){ext}"):
-            n += 1
-        return f"{base}({n}){ext}"
+        while True:
+            candidate = f"{base}({n}){ext}"
+            try:
+                fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                return candidate
+            except FileExistsError:
+                n += 1
 
 
 def checkout_dir(path: str, onlynew: bool = False) -> str:
