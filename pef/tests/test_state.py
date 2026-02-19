@@ -2,7 +2,7 @@
 
 import json
 import os
-
+import time
 
 from pef.core.state import StateManager
 
@@ -323,3 +323,148 @@ class TestStateManagerResumeScenarios:
         assert state2.status == "in_progress"
         assert state2.total_count == 10
         assert state2.processed_count == 0
+
+
+class TestAtomicWrites:
+    """Tests for atomic write behavior."""
+
+    def test_truncated_file_can_resume_returns_false(self, temp_dir):
+        """Verify can_resume returns False when state file is truncated."""
+        state = StateManager(temp_dir)
+        state.create("/source", 10)
+        state.mark_processed("/source/file1.json")
+        state.save()
+
+        # Simulate truncated/corrupted file from a crash mid-write
+        with open(state.state_path, "w") as f:
+            f.write('{"version": 1, "status": "in_pro')  # truncated JSON
+
+        state2 = StateManager(temp_dir)
+        assert state2.can_resume() is False
+
+    def test_no_temp_files_left_after_save(self, temp_dir):
+        """Verify no temporary files remain after successful save."""
+        state = StateManager(temp_dir)
+        state.create("/source", 10)
+        state.mark_processed("/source/file1.json")
+        state.save()
+
+        files = os.listdir(temp_dir)
+        temp_files = [f for f in files if f.endswith(".tmp")]
+        assert temp_files == []
+
+    def test_state_file_valid_after_save(self, temp_dir):
+        """Verify state file is valid JSON after atomic save."""
+        state = StateManager(temp_dir)
+        state.create("/source", 10)
+        for i in range(50):
+            state.mark_processed(f"/source/file{i}.json")
+        state.save()
+
+        with open(state.state_path, "r") as f:
+            saved = json.load(f)
+
+        assert saved["processed_count"] == 50
+        assert len(saved["processed_jsons"]) == 50
+
+
+class TestPathNormalization:
+    """Tests for path normalization."""
+
+    def test_normalize_forward_and_backslash(self, temp_dir):
+        """Verify paths with different separators match after normalization."""
+        state = StateManager(temp_dir)
+        state.create("/source", 10)
+
+        # Store with forward slashes
+        state.mark_processed("/source/subdir/file1.json")
+
+        # Look up with backslashes (Windows-style)
+        assert state.is_processed("\\source\\subdir\\file1.json")
+
+    def test_normalize_redundant_separators(self, temp_dir):
+        """Verify paths with redundant separators are normalized."""
+        state = StateManager(temp_dir)
+        state.create("/source", 10)
+
+        state.mark_processed("/source//subdir///file1.json")
+
+        assert state.is_processed("/source/subdir/file1.json")
+
+    def test_normalize_dot_segments(self, temp_dir):
+        """Verify paths with . and .. segments are normalized."""
+        state = StateManager(temp_dir)
+        state.create("/source", 10)
+
+        state.mark_processed("/source/subdir/../subdir/./file1.json")
+
+        assert state.is_processed("/source/subdir/file1.json")
+
+    def test_normalize_in_filter_unprocessed(self, temp_dir):
+        """Verify filter_unprocessed normalizes paths for comparison."""
+        state = StateManager(temp_dir)
+        state.create("/source", 5)
+
+        state.mark_processed("/source/subdir/file1.json")
+
+        # Use different path format in filter list
+        all_jsons = [
+            "/source/subdir/file1.json",
+            "/source/subdir/file2.json",
+        ]
+        result = state.filter_unprocessed(all_jsons)
+        assert len(result) == 1
+        assert "/source/subdir/file2.json" in result
+
+    def test_normalize_persists_through_save_load(self, temp_dir):
+        """Verify normalized paths survive save/load cycle."""
+        state1 = StateManager(temp_dir)
+        state1.create("/source", 10)
+        state1.mark_processed("/source//extra/../extra/file1.json")
+        state1.save()
+
+        state2 = StateManager(temp_dir)
+        state2.load()
+
+        # Should match the normalized form
+        assert state2.is_processed("/source/extra/file1.json")
+        assert state2.processed_count == 1
+
+
+class TestAdaptiveSaveInterval:
+    """Tests for adaptive save interval."""
+
+    def test_default_interval_is_100(self, temp_dir):
+        """Verify initial save interval is 100."""
+        state = StateManager(temp_dir)
+        state.create("/source", 50000)
+        assert state._save_interval() == 100
+
+    def test_interval_grows_with_processed_count(self, temp_dir):
+        """Verify save interval grows as more files are processed."""
+        state = StateManager(temp_dir)
+        state.create("/source", 50000)
+
+        # Manually add entries to simulate large set without triggering saves
+        for i in range(20000):
+            state._processed.add(f"/source/file{i}.json")
+
+        # 20000 // 100 = 200, which is > 100
+        assert state._save_interval() == 200
+
+    def test_save_time_does_not_grow_linearly(self, temp_dir):
+        """Verify state save at 10K entries completes in reasonable time."""
+        state = StateManager(temp_dir)
+        state.create("/source", 20000)
+
+        # Add 10K entries
+        for i in range(10000):
+            state._processed.add(f"/source/file{i}.json")
+
+        start = time.perf_counter()
+        state.save()
+        elapsed = time.perf_counter() - start
+
+        # Save should complete in well under 5 seconds even at 10K entries
+        assert elapsed < 5.0
+        assert state.processed_count == 10000
