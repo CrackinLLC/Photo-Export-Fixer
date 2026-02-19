@@ -14,12 +14,17 @@
       "Bash(python:*)",
       "Bash(grep:*)",
       "Bash(ls:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(node:*)",
+      "Bash(den-dev:*)",
+      "Bash(pride-dev:*)",
+      "Bash(forgecrew-dev:*)",
+      "Bash(gh:*)"
     ]
   },
-  "enabledMcpjsonServers": [
-    "den",
-    "pride"
-  ],
-  "enableAllProjectMcpServers": true
+  "enabledMcpjsonServers": ["den", "pride"],
+  "enableAllProjectMcpServers": true,
+  "additionalDirectories": ["../Photo-Export-Fixer"]
 }
