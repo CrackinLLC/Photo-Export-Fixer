@@ -85,6 +85,11 @@ class PEFOrchestrator:
         result = orchestrator.process(force=True)
     """
 
+    # Batch size for parallel file copying progress updates.
+    # Files are copied in sub-batches to allow progress reporting
+    # and periodic metadata flushes between batches.
+    _COPY_BATCH_SIZE = 200
+
     def __init__(
         self,
         source_path: str,
@@ -336,16 +341,16 @@ class PEFOrchestrator:
             ) as processor:
                 matcher = FileMatcher(scanner.file_index, self.suffixes, scanner.lowercase_index)
 
+                # Phase 2a: Match all JSONs (fast, sequential)
                 total = len(jsons_to_process)
                 interval = _adaptive_interval(total)
+                copy_batch = []  # (FileInfo, JsonMetadata) pairs for parallel copying
+                file_to_json_path = {}  # FileInfo.filepath -> json_path
+                json_metadata_map = {}  # json_path -> JsonMetadata
 
                 for i, json_path in enumerate(jsons_to_process):
                     if on_progress and i % interval == 0:
-                        on_progress(i, total, f"[2/3] Processing: {os.path.basename(json_path)}")
-
-                    # Periodic flush of batched metadata writes for progress visibility
-                    if i > 0 and i % 500 == 0:
-                        processor.flush_metadata_writes()
+                        on_progress(i, total, f"[2/3] Matching: {os.path.basename(json_path)}")
 
                     metadata = self._read_json(json_path)
                     if not metadata:
@@ -357,26 +362,10 @@ class PEFOrchestrator:
                     # Use find_all_related_files to get original AND all edited variants
                     match = matcher.find_all_related_files(json_path, metadata.title)
                     if match.found:
-                        any_success = False
                         for file_info in match.files:
-                            try:
-                                dest = processor.process_file(file_info, metadata)
-                                matched_file_paths.add(file_info.filepath)
-                                processed_files.append({
-                                    "filename": file_info.filename,
-                                    "filepath": file_info.filepath,
-                                    "output_path": dest,
-                                    "json_path": json_path
-                                })
-                                any_success = True
-                            except Exception as e:
-                                result.errors.append(f"Error processing {file_info.filepath}: {e}")
-                        # Count GPS/people per JSON, not per file
-                        if any_success:
-                            if metadata.has_location():
-                                processor.stats.with_gps += 1
-                            if metadata.has_people():
-                                processor.stats.with_people += 1
+                            copy_batch.append((file_info, metadata))
+                            file_to_json_path[file_info.filepath] = json_path
+                            json_metadata_map[json_path] = metadata
                     else:
                         # Valid Takeout JSON but no matching media file found
                         logger.debug(
@@ -388,7 +377,53 @@ class PEFOrchestrator:
                     # Mark this JSON as processed for resume capability
                     self._active_state.mark_processed(json_path)
 
-                # Phase 3: Handle unmatched files (copy all, track as unprocessed)
+                # Phase 2b: Copy matched files in parallel batches
+                total_files = len(copy_batch)
+                jsons_with_success = set()
+
+                for batch_start in range(0, total_files, self._COPY_BATCH_SIZE):
+                    chunk = copy_batch[batch_start:batch_start + self._COPY_BATCH_SIZE]
+
+                    try:
+                        batch_results = processor.process_files_batch(chunk)
+                    except Exception as e:
+                        for file_info, _ in chunk:
+                            result.errors.append(f"Error processing {file_info.filepath}: {e}")
+                        continue
+
+                    for file_info, dest_path, error in batch_results:
+                        if error and error.startswith("Error:"):
+                            # Copy failed — don't mark as matched so file
+                            # falls through to Phase 3 unmatched copy
+                            result.errors.append(f"Error processing {file_info.filepath}: {error}")
+                            continue
+
+                        matched_file_paths.add(file_info.filepath)
+                        json_path = file_to_json_path.get(file_info.filepath, "")
+
+                        processed_files.append({
+                            "filename": file_info.filename,
+                            "filepath": file_info.filepath,
+                            "output_path": dest_path,
+                            "json_path": json_path
+                        })
+                        jsons_with_success.add(json_path)
+
+                    done = min(batch_start + self._COPY_BATCH_SIZE, total_files)
+                    if on_progress:
+                        on_progress(done, total_files, f"[2/3] Copying files ({done}/{total_files})...")
+
+                    processor.flush_metadata_writes()
+
+                # Count GPS/people per JSON (once per JSON, not per file)
+                for json_path in jsons_with_success:
+                    metadata = json_metadata_map[json_path]
+                    if metadata.has_location():
+                        processor.stats.with_gps += 1
+                    if metadata.has_people():
+                        processor.stats.with_people += 1
+
+                # Phase 3: Handle unmatched files (parallel copy)
                 unmatched_files = [
                     f for f in scanner.files
                     if f.filepath not in matched_file_paths
@@ -397,17 +432,19 @@ class PEFOrchestrator:
                 if on_progress:
                     on_progress(0, len(unmatched_files), "[3/3] Copying unmatched files...")
 
-                unmatched_interval = _adaptive_interval(len(unmatched_files))
+                if unmatched_files:
+                    def unmatched_progress(current, total_um, message):
+                        if on_progress:
+                            on_progress(current, total_um, f"[3/3] {message}")
 
-                for i, file_info in enumerate(unmatched_files):
-                    if on_progress and i % unmatched_interval == 0:
-                        on_progress(i, len(unmatched_files), f"[3/3] Copying: {file_info.filename}")
+                    unmatched_results = processor.copy_unmatched_files_parallel(
+                        unmatched_files,
+                        on_progress=unmatched_progress
+                    )
 
-                    try:
-                        processor.copy_unmatched_file(file_info)
-                    except Exception as e:
-                        logger.warning(f"Failed to copy unmatched file {file_info.filepath}: {e}")
-                        result.errors.append(f"Error copying {file_info.filepath}: {e}")
+                    for file_info, dest_path, error in unmatched_results:
+                        if error:
+                            result.errors.append(f"Error copying {file_info.filepath}: {error}")
 
                 result.stats = processor.stats
                 result.unprocessed_items = processor.unprocessed_items

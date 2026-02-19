@@ -615,10 +615,10 @@ class TestPEFOrchestratorErrorHandling:
 
         with patch('pef.core.processor.filedate'):
             with patch('pef.core.processor.ExifToolManager'):
-                # Patch process_file to raise an error
+                # Patch process_files_batch to raise an error
                 with patch.object(
                     __import__('pef.core.processor', fromlist=['FileProcessor']).FileProcessor,
-                    'process_file',
+                    'process_files_batch',
                     side_effect=PermissionError("Access denied")
                 ):
                     orchestrator = PEFOrchestrator(
@@ -866,8 +866,10 @@ class TestPEFOrchestratorProgressPhases:
         phase_messages = [m for m in messages if m.startswith("[")]
         assert len(phase_messages) > 0
 
-        # Check that processing phase exists
-        has_processing_phase = any("[2/3]" in m and "Processing" in m for m in messages)
+        # Check that processing phase exists (matching or copying)
+        has_processing_phase = any(
+            "[2/3]" in m and ("Matching" in m or "Copying" in m) for m in messages
+        )
         assert has_processing_phase
 
     def test_progress_updates_more_frequently_for_small_collections(self, sample_takeout):
