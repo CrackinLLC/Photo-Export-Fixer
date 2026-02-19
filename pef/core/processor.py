@@ -357,15 +357,24 @@ class FileProcessor:
                 try:
                     _, error = future.result()
 
+                    if error and error.startswith("Error:"):
+                        # Copy failed - track as error
+                        if self.logger:
+                            self.logger.log(f"{error} for {file.filepath}")
+                        self.stats.errors += 1
+                        results.append((file, dest_path, error))
+                        continue
+
                     if error and self.logger:
+                        # Warning (e.g., date set failed) - non-fatal
                         self.logger.log(f"{error} for {dest_path}")
 
-                    # Update file info
+                    # Copy succeeded - update file info
                     file.output_path = dest_path
                     file.json_path = metadata.filepath
 
                     # Queue metadata write
-                    if self._exiftool and self.write_exif and not error:
+                    if self._exiftool and self.write_exif:
                         tags = self._build_tags(metadata)
                         if tags:
                             self.queue_metadata_write(dest_path, tags)
@@ -374,9 +383,10 @@ class FileProcessor:
                     results.append((file, dest_path, error))
 
                 except Exception as e:
-                    error_msg = f"Error processing {file.filepath}: {e}"
+                    error_msg = f"Error: {e}"
                     if self.logger:
-                        self.logger.log(error_msg)
+                        self.logger.log(f"{error_msg} for {file.filepath}")
+                    self.stats.errors += 1
                     results.append((file, dest_path, error_msg))
 
         return results
@@ -507,3 +517,101 @@ class FileProcessor:
                 on_progress(i + 1, total, f"Copying: {file.filename}")
 
         return files
+
+    def copy_unmatched_files_parallel(
+        self,
+        files: List[FileInfo],
+        on_progress: Optional[ProgressCallback] = None
+    ) -> List[Tuple[FileInfo, str, Optional[str]]]:
+        """Copy unmatched files in parallel preserving album structure.
+
+        Destinations are prepared sequentially (for path uniqueness safety),
+        then files are copied in parallel using ThreadPoolExecutor.
+
+        Args:
+            files: List of unmatched files.
+            on_progress: Optional progress callback.
+
+        Returns:
+            List of (FileInfo, dest_path, error_or_none) tuples.
+        """
+        if not files:
+            return []
+
+        # Prepare destinations sequentially (get_unique_path needs sequential access)
+        tasks = []
+        for file in files:
+            album_dir = self._get_album_dir(file.album_name)
+            ext_lower = os.path.splitext(file.filename)[1].lower()
+            is_motion_photo = ext_lower in MOTION_PHOTO_EXTENSIONS
+
+            dest_filename = file.filename
+            if is_motion_photo and self.rename_mp:
+                base = os.path.splitext(file.filename)[0]
+                dest_filename = base + ".MP4"
+
+            dest_path = get_unique_path(os.path.join(album_dir, dest_filename))
+            tasks.append((file, dest_path, dest_filename, is_motion_photo, ext_lower))
+
+        results = []
+        completed = 0
+        total = len(tasks)
+
+        # Copy in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=self._copy_workers) as executor:
+            future_to_task = {
+                executor.submit(shutil.copy, task[0].filepath, task[1]): task
+                for task in tasks
+            }
+
+            for future in as_completed(future_to_task):
+                file, dest_path, dest_filename, is_motion_photo, ext_lower = future_to_task[future]
+                try:
+                    future.result()
+
+                    # Copy succeeded - update tracking (main thread only)
+                    file.output_path = dest_path
+                    self.stats.unmatched_files += 1
+
+                    relative_path = os.path.join(file.album_name, dest_filename)
+
+                    # Determine reason and track
+                    if is_motion_photo:
+                        parent_image = file.filename
+                        if parent_image.lower().endswith(".mp"):
+                            parent_image = parent_image[:-3]
+                        elif parent_image.lower().endswith(".mp~2"):
+                            parent_image = parent_image[:-5]
+
+                        reason = f"Motion photo sidecar (parent: {parent_image})"
+                        self.motion_photos.append(MotionPhotoInfo(
+                            relative_path=relative_path,
+                            parent_image=parent_image,
+                            extension=ext_lower
+                        ))
+                    else:
+                        reason = "No matching JSON found"
+
+                    self.unprocessed_items.append(UnprocessedItem(
+                        relative_path=relative_path,
+                        reason=reason,
+                        source_path=file.filepath
+                    ))
+
+                    if self.logger and self.verbose:
+                        self.logger.log(f"Copying unprocessed: {file.filepath}")
+
+                    results.append((file, dest_path, None))
+
+                except OSError as e:
+                    logger.warning(f"Failed to copy unmatched file {file.filepath}: {e}")
+                    if self.logger:
+                        self.logger.log(f"Error: Failed to copy unmatched file {file.filepath}: {e}")
+                    self.stats.errors += 1
+                    results.append((file, "", str(e)))
+
+                completed += 1
+                if on_progress:
+                    on_progress(completed, total, f"Copying: {file.filename}")
+
+        return results
