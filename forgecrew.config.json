@@ -20,7 +20,8 @@
     "packages": []
   },
   "scripts": {
-    "build": "npm run build"
+    "test": "python -m pytest",
+    "build": "echo 'No build step for Python project'"
   },
   "den": {
     "defaultBase": "main"
