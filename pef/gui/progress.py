@@ -1,55 +1,67 @@
-"""Progress dialog for long-running operations."""
+"""Inline progress view for long-running operations."""
 
 import tkinter as tk
 from tkinter import ttk
 
 
-class ProgressDialog:
-    """Modal progress dialog with progress bar and status text."""
+class InlineProgressView(ttk.Frame):
+    """Inline progress view that replaces setup widgets during processing.
 
-    def __init__(self, parent: tk.Tk, title: str = "Processing"):
-        """Create progress dialog.
+    Shows title, progress bar, percentage/file count, status message,
+    and cancel button. Supports both determinate and indeterminate modes.
+    """
+
+    def __init__(self, parent: ttk.Frame, on_cancel=None, **kwargs):
+        """Create inline progress view.
 
         Args:
-            parent: Parent window.
-            title: Dialog title.
+            parent: Parent frame to pack into.
+            on_cancel: Callback when cancel button is clicked.
         """
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title(title)
-        self.dialog.geometry("400x120")
-        self.dialog.resizable(False, False)
-        self.dialog.transient(parent)
-        self.dialog.grab_set()
+        super().__init__(parent, **kwargs)
 
-        # Center on parent
-        self.dialog.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() - 400) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - 120) // 2
-        self.dialog.geometry(f"+{x}+{y}")
-
-        # Content
-        frame = ttk.Frame(self.dialog, padding="20")
-        frame.pack(fill=tk.BOTH, expand=True)
-
-        # Status label
-        self.status_var = tk.StringVar(value="Starting...")
-        status_label = ttk.Label(frame, textvariable=self.status_var)
-        status_label.pack(fill=tk.X, pady=(0, 10))
+        # Title label
+        self._title_var = tk.StringVar(value="Processing...")
+        title_label = ttk.Label(
+            self,
+            textvariable=self._title_var,
+            font=("", 14, "bold")
+        )
+        title_label.pack(fill=tk.X, pady=(20, 15))
 
         # Progress bar
-        self.progress = ttk.Progressbar(frame, mode="determinate", length=350)
-        self.progress.pack(fill=tk.X)
+        self._progress = ttk.Progressbar(self, mode="determinate", length=400)
+        self._progress.pack(fill=tk.X, padx=20, pady=(0, 5))
 
-        # Percentage label
-        self.percent_var = tk.StringVar(value="0%")
-        percent_label = ttk.Label(frame, textvariable=self.percent_var)
-        percent_label.pack(pady=(5, 0))
+        # Percentage / file count label
+        self._percent_var = tk.StringVar(value="0%")
+        percent_label = ttk.Label(self, textvariable=self._percent_var)
+        percent_label.pack(pady=(0, 5))
 
-        # Prevent closing
-        self.dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+        # Status message label
+        self._status_var = tk.StringVar(value="Starting...")
+        status_label = ttk.Label(
+            self,
+            textvariable=self._status_var,
+            foreground="gray"
+        )
+        status_label.pack(fill=tk.X, padx=20, pady=(0, 15))
 
-    def update(self, current: int, total: int, message: str):
-        """Update progress.
+        # Cancel button
+        self._cancel_btn = ttk.Button(
+            self,
+            text="Cancel",
+            command=on_cancel,
+            width=15
+        )
+        self._cancel_btn.pack(pady=(0, 10))
+
+    def set_title(self, title: str):
+        """Set the progress title."""
+        self._title_var.set(title)
+
+    def update_progress(self, current: int, total: int, message: str):
+        """Update progress display.
 
         Args:
             current: Current progress value.
@@ -58,26 +70,27 @@ class ProgressDialog:
         """
         if total <= 0:
             # Indeterminate mode — pulsing bar, show file count
-            if self.progress["mode"] != "indeterminate":
-                self.progress.configure(mode="indeterminate")
-                self.progress.start(15)
-            self.percent_var.set(f"{current:,} files" if current > 0 else "")
+            if self._progress["mode"] != "indeterminate":
+                self._progress.configure(mode="indeterminate")
+                self._progress.start(15)
+            self._percent_var.set(f"{current:,} files" if current > 0 else "")
         else:
             # Determinate mode — normal percentage
-            if self.progress["mode"] != "determinate":
-                self.progress.stop()
-                self.progress.configure(mode="determinate")
+            if self._progress["mode"] != "determinate":
+                self._progress.stop()
+                self._progress.configure(mode="determinate")
             percent = int((current / total) * 100)
-            self.progress["value"] = percent
-            self.percent_var.set(f"{percent}%")
+            self._progress["value"] = percent
+            self._percent_var.set(f"{percent}% ({current:,} / {total:,})")
 
         # Truncate long messages
         display_msg = message[:60] + "..." if len(message) > 60 else message
-        self.status_var.set(display_msg)
+        self._status_var.set(display_msg)
 
-        self.dialog.update_idletasks()
+    def disable_cancel(self):
+        """Disable the cancel button (e.g. after cancel is clicked)."""
+        self._cancel_btn.config(state="disabled")
 
-    def close(self):
-        """Close the dialog."""
-        self.dialog.grab_release()
-        self.dialog.destroy()
+    def set_status(self, message: str):
+        """Set the status message directly."""
+        self._status_var.set(message)

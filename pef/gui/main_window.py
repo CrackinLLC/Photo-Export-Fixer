@@ -10,7 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from pef.core.orchestrator import PEFOrchestrator
 from pef.core.exiftool import is_exiftool_available, get_install_instructions
-from pef.gui.progress import ProgressDialog
+from pef.gui.progress import InlineProgressView
 from pef.gui.settings import Settings
 
 
@@ -151,6 +151,10 @@ class PEFMainWindow:
         # ExifTool availability (set by _check_exiftool)
         self._exiftool_available = False
 
+        # Cancel event for cooperative cancellation
+        self._cancel_event = None
+        self._progress_view = None
+
         # Build UI
         self._create_widgets()
 
@@ -168,7 +172,7 @@ class PEFMainWindow:
 
         # ===== BOTTOM SECTION (pack first to stay at bottom) =====
 
-        # Status bar
+        # Status bar (always visible)
         status_frame = ttk.Frame(main_frame)
         status_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
@@ -182,8 +186,13 @@ class PEFMainWindow:
         )
         status_bar.pack(fill=tk.X)
 
+        # ===== SETUP CONTAINER (shown when not processing) =====
+
+        self._setup_container = ttk.Frame(main_frame)
+        self._setup_container.pack(fill=tk.BOTH, expand=True)
+
         # Buttons
-        button_frame = ttk.Frame(main_frame)
+        button_frame = ttk.Frame(self._setup_container)
         button_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(10, 5))
 
         dry_run_btn = ttk.Button(
@@ -208,7 +217,7 @@ class PEFMainWindow:
 
         # ===== TOP SECTION (fixed header) =====
 
-        header_frame = ttk.Frame(main_frame)
+        header_frame = ttk.Frame(self._setup_container)
         header_frame.pack(fill=tk.X, side=tk.TOP)
 
         # Title
@@ -267,7 +276,7 @@ class PEFMainWindow:
 
         # ===== MIDDLE SECTION (scrollable) =====
 
-        self.scroll_frame = ScrollableFrame(main_frame)
+        self.scroll_frame = ScrollableFrame(self._setup_container)
         self.scroll_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
 
         scroll_content = self.scroll_frame.content
@@ -336,6 +345,11 @@ class PEFMainWindow:
             variable=self.rename_mp
         )
         rename_mp_check.pack(anchor=tk.W, pady=2)
+
+        # ===== PROGRESS CONTAINER (hidden initially, shown during processing) =====
+
+        self._progress_container = ttk.Frame(main_frame)
+        # Not packed yet — shown by _show_progress_view()
 
     def _on_advanced_toggle(self):
         """Handle advanced options toggle - update scroll region."""
@@ -453,10 +467,47 @@ class PEFMainWindow:
             rename_mp=self.rename_mp.get()
         )
 
-    def _run_async(self, status_msg: str, dialog_title: str, operation, on_complete):
-        """Run an operation asynchronously with progress dialog."""
+    def _show_progress_view(self, title: str):
+        """Swap from setup view to inline progress view."""
+        self._setup_container.pack_forget()
+        self._progress_view = InlineProgressView(
+            self._progress_container,
+            on_cancel=self._on_cancel
+        )
+        self._progress_view.set_title(title)
+        self._progress_view.pack(fill=tk.BOTH, expand=True)
+        self._progress_container.pack(fill=tk.BOTH, expand=True)
+
+    def _show_setup_view(self):
+        """Swap from progress view back to setup view."""
+        self._progress_container.pack_forget()
+        # Destroy progress view widgets
+        for child in self._progress_container.winfo_children():
+            child.destroy()
+        self._progress_view = None
+        self._setup_container.pack(fill=tk.BOTH, expand=True)
+
+    def _on_cancel(self):
+        """Handle cancel button click with confirmation dialog."""
+        if not self._cancel_event:
+            return
+
+        confirmed = messagebox.askyesno(
+            "Cancel Processing",
+            "Are you sure you want to cancel?\n\n"
+            "Progress will be saved. You can resume later."
+        )
+        if confirmed:
+            self._cancel_event.set()
+            if self._progress_view:
+                self._progress_view.disable_cancel()
+                self._progress_view.set_status("Cancelling... saving progress")
+            self.status_var.set("Cancelling...")
+
+    def _run_async(self, status_msg: str, title: str, operation, on_complete):
+        """Run an operation asynchronously with inline progress view."""
         self.status_var.set(status_msg)
-        progress = ProgressDialog(self.root, dialog_title)
+        self._show_progress_view(title)
 
         def run():
             success = False
@@ -470,21 +521,39 @@ class PEFMainWindow:
                     if now - last_update[0] < 0.12 and t > 0 and c < t:
                         return
                     last_update[0] = now
-                    self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m) if self.root.winfo_exists() else None)
+
+                    def update_ui(c=c, t=t, m=m):
+                        if self.root.winfo_exists() and self._progress_view:
+                            self._progress_view.update_progress(c, t, m)
+
+                    self.root.after(0, update_ui)
 
                 result = operation(orchestrator, progress_cb)
-                self.root.after(0, lambda: on_complete(result) if self.root.winfo_exists() else None)
+                self.root.after(0, lambda: self._on_operation_complete(result, on_complete))
                 success = True
             except Exception as e:
                 error_msg = str(e)
-                self.root.after(0, lambda: messagebox.showerror("Error", error_msg) if self.root.winfo_exists() else None)
-            finally:
-                self.root.after(0, lambda: progress.close() if self.root.winfo_exists() else None)
-                if not success:
-                    self.root.after(0, lambda: self.status_var.set("Ready") if self.root.winfo_exists() else None)
+                self.root.after(0, lambda: self._on_operation_error(error_msg))
 
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
+
+    def _on_operation_complete(self, result, on_complete):
+        """Handle operation completion on the main thread."""
+        if not self.root.winfo_exists():
+            return
+        self._cancel_event = None
+        self._show_setup_view()
+        on_complete(result)
+
+    def _on_operation_error(self, error_msg):
+        """Handle operation error on the main thread."""
+        if not self.root.winfo_exists():
+            return
+        self._cancel_event = None
+        self._show_setup_view()
+        self.status_var.set("Ready")
+        messagebox.showerror("Error", error_msg)
 
     def _on_dry_run(self):
         """Handle dry run button click."""
@@ -559,10 +628,12 @@ ExifTool: {exif_status}"""
             return
 
         force = self.force_restart.get()
+        self._cancel_event = threading.Event()
+        cancel_event = self._cancel_event
         self._run_async(
             "Processing...",
             "Processing Files",
-            lambda orch, cb: orch.process(on_progress=cb, force=force),
+            lambda orch, cb: orch.process(on_progress=cb, force=force, cancel_event=cancel_event),
             self._show_process_results
         )
 
@@ -573,6 +644,12 @@ ExifTool: {exif_status}"""
 
     def _show_process_results(self, result):
         """Show processing results."""
+        if result.cancelled:
+            self.status_var.set(
+                "Cancelled \u2014 progress saved. Resume by clicking Start again."
+            )
+            return
+
         # Build result message
         lines = [
             f"Processed: {result.stats.processed:,} files",

@@ -7,6 +7,7 @@ Used by both CLI and GUI.
 import logging
 import os
 import shutil
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -220,7 +221,8 @@ class PEFOrchestrator:
     def process(
         self,
         on_progress: Optional[ProgressCallback] = None,
-        force: bool = False
+        force: bool = False,
+        cancel_event: Optional[threading.Event] = None
     ) -> ProcessRunResult:
         """Run full processing with automatic resume support.
 
@@ -230,6 +232,8 @@ class PEFOrchestrator:
         Args:
             on_progress: Optional callback for progress updates.
             force: If True, start fresh and ignore any previous progress.
+            cancel_event: Optional threading.Event for cooperative cancellation.
+                When set, processing saves progress and returns early.
 
         Returns:
             ProcessRunResult with statistics and paths.
@@ -362,6 +366,13 @@ class PEFOrchestrator:
                         )
 
                     for i, json_path in enumerate(jsons_to_process):
+                        if cancel_event and cancel_event.is_set():
+                            self._active_state.save()
+                            result.cancelled = True
+                            if on_progress:
+                                on_progress(i, total, "Cancelled — saving progress")
+                            break
+
                         if on_progress and i % interval == 0:
                             on_progress(i, total, f"[2/3] Processing: {os.path.basename(json_path)}")
 
@@ -435,12 +446,19 @@ class PEFOrchestrator:
                     if f.filepath not in matched_file_paths
                 ]
 
-                if on_progress:
+                if not result.cancelled and on_progress:
                     on_progress(0, len(unmatched_files), "[3/3] Copying unmatched files...")
 
                 unmatched_interval = _adaptive_interval(len(unmatched_files))
 
                 for i, file_info in enumerate(unmatched_files):
+                    if cancel_event and cancel_event.is_set():
+                        self._active_state.save()
+                        result.cancelled = True
+                        if on_progress:
+                            on_progress(i, len(unmatched_files), "Cancelled — saving progress")
+                        break
+
                     if on_progress and i % unmatched_interval == 0:
                         on_progress(i, len(unmatched_files), f"[3/3] Copying: {file_info.filename}")
 
@@ -457,6 +475,14 @@ class PEFOrchestrator:
                 # Write unprocessed.txt and motion_photos.txt
                 pef_logger.write_unprocessed(processor.unprocessed_items)
                 pef_logger.write_motion_photos(processor.motion_photos)
+
+            # Skip remaining phases if cancelled
+            if result.cancelled:
+                end_time = time.time()
+                result.elapsed_time = round(end_time - start_time, 3)
+                result.end_time = time.strftime("%Y-%m-%d %H:%M:%S")
+                self._active_state = None
+                return result
 
             # Phase 4: Copy unmatched JSONs to _pef/unmatched_data/
             if unmatched_jsons:

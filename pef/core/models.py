@@ -180,6 +180,7 @@ class ProcessRunResult:
     resumed: bool = False
     skipped_count: int = 0
     interrupted: bool = False
+    cancelled: bool = False
     motion_photo_count: int = 0
     unprocessed_items: List[UnprocessedItem] = field(default_factory=list)
 
