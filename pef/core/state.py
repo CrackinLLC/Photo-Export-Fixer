@@ -7,6 +7,7 @@ after interruption without re-processing files.
 import json
 import logging
 import os
+import tempfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
@@ -92,7 +93,7 @@ class StateManager:
         if not state:
             return False
 
-        self._processed = set(state.get("processed_jsons", []))
+        self._processed = {os.path.normpath(p) for p in state.get("processed_jsons", [])}
         self._source_path = state.get("source_path", "")
         self._started_at = state.get("started_at", "")
         self._status = state.get("status", "pending")
@@ -114,18 +115,23 @@ class StateManager:
         self._pending_saves = 0
         self._save()
 
+    def _save_interval(self) -> int:
+        """Calculate adaptive save interval based on processed count."""
+        return max(100, len(self._processed) // 100)
+
     def mark_processed(self, json_path: str) -> None:
         """Mark a JSON file as processed.
 
-        Auto-saves state periodically based on SAVE_INTERVAL.
+        Auto-saves state periodically based on an adaptive save interval
+        that grows with the number of processed files.
 
         Args:
             json_path: Path to the processed JSON file.
         """
-        self._processed.add(json_path)
+        self._processed.add(os.path.normpath(json_path))
         self._pending_saves += 1
 
-        if self._pending_saves >= self.SAVE_INTERVAL:
+        if self._pending_saves >= self._save_interval():
             self._save()
             self._pending_saves = 0
 
@@ -138,7 +144,7 @@ class StateManager:
         Returns:
             True if the JSON was already processed.
         """
-        return json_path in self._processed
+        return os.path.normpath(json_path) in self._processed
 
     def filter_unprocessed(self, all_jsons: List[str]) -> List[str]:
         """Filter a list to only include unprocessed JSONs.
@@ -149,7 +155,7 @@ class StateManager:
         Returns:
             List of JSON paths that haven't been processed yet.
         """
-        return [j for j in all_jsons if j not in self._processed]
+        return [j for j in all_jsons if os.path.normpath(j) not in self._processed]
 
     def complete(self) -> None:
         """Mark processing as complete and save final state."""
@@ -182,7 +188,12 @@ class StateManager:
         return self._status
 
     def _save(self) -> None:
-        """Write state to file."""
+        """Write state to file atomically.
+
+        Writes to a temporary file in the same directory, then atomically
+        replaces the target file via os.replace(). This prevents corruption
+        if the process crashes mid-write.
+        """
         state = {
             "version": 1,
             "source_path": self._source_path,
@@ -191,18 +202,31 @@ class StateManager:
             "status": self._status,
             "total_json_count": self._total_count,
             "processed_count": len(self._processed),
-            "processed_jsons": list(self._processed)
+            "processed_jsons": sorted(self._processed)
         }
 
         try:
             os.makedirs(self.output_dir, exist_ok=True)
 
-            if _USE_ORJSON:
-                with open(self.state_path, "wb") as f:
-                    f.write(orjson.dumps(state, option=orjson.OPT_INDENT_2))
-            else:
-                with open(self.state_path, "w", encoding="utf-8") as f:
-                    json.dump(state, f, indent=2)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.output_dir, suffix=".tmp", prefix=".state_"
+            )
+            try:
+                if _USE_ORJSON:
+                    with open(fd, "wb") as f:
+                        f.write(orjson.dumps(state, option=orjson.OPT_INDENT_2))
+                else:
+                    with open(fd, "w", encoding="utf-8") as f:
+                        json.dump(state, f, indent=2)
+
+                os.replace(tmp_path, self.state_path)
+            except BaseException:
+                # Clean up temp file on any failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
 
         except Exception as e:
             logger.warning(f"Failed to save state to {self.state_path}: {e}")
