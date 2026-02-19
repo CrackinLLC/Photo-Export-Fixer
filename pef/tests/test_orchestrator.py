@@ -433,6 +433,50 @@ class TestPEFOrchestratorReadJson:
 
         assert result is None
 
+    def test_logs_corrupt_json(self, temp_dir, caplog):
+        """Corrupt/invalid JSON logs a distinct debug message."""
+        import logging
+        json_path = os.path.join(temp_dir, "corrupt.json")
+        with open(json_path, "w") as f:
+            f.write("{bad json content")
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        with caplog.at_level(logging.DEBUG, logger="pef.core.orchestrator"):
+            result = orchestrator._read_json(json_path)
+
+        assert result is None
+        assert any("Invalid/corrupt JSON" in msg for msg in caplog.messages)
+
+    def test_logs_non_takeout_json_missing_title(self, temp_dir, caplog):
+        """JSON missing 'title' field logs a non-Takeout debug message."""
+        import logging
+        json_path = os.path.join(temp_dir, "not_takeout.json")
+        json_data = {"someField": "someValue"}
+        with open(json_path, "w") as f:
+            json.dump(json_data, f)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        with caplog.at_level(logging.DEBUG, logger="pef.core.orchestrator"):
+            result = orchestrator._read_json(json_path)
+
+        assert result is None
+        assert any("non-Takeout JSON" in msg and "missing 'title'" in msg for msg in caplog.messages)
+
+    def test_logs_non_takeout_json_missing_timestamp(self, temp_dir, caplog):
+        """JSON missing 'photoTakenTime.timestamp' logs a non-Takeout debug message."""
+        import logging
+        json_path = os.path.join(temp_dir, "no_timestamp.json")
+        json_data = {"title": "photo.jpg"}
+        with open(json_path, "w") as f:
+            json.dump(json_data, f)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        with caplog.at_level(logging.DEBUG, logger="pef.core.orchestrator"):
+            result = orchestrator._read_json(json_path)
+
+        assert result is None
+        assert any("non-Takeout JSON" in msg and "photoTakenTime" in msg for msg in caplog.messages)
+
     def test_timestamp_converts_utc_epoch_to_local_datetime(self, temp_dir):
         """Verify UTC epoch timestamp is converted to local datetime.
 

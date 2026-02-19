@@ -380,8 +380,16 @@ class ExifToolManager:
     ) -> List[bool]:
         """Write tags to multiple files efficiently.
 
-        Processes files in a batch to reduce ExifTool invocation overhead.
-        Each file can have different tags.
+        Processes files sequentially through a single persistent ExifTool
+        process (via pyexiftool's stay_open mode). Each file gets its own
+        set_tags call because tags typically differ per file (date, GPS,
+        people, description vary per photo).
+
+        Grouping files with identical tags into single ExifTool calls would
+        save minimal overhead: the dominant cost is ExifTool's internal
+        per-file processing (reading/writing metadata structures), not the
+        IPC between Python and the ExifTool process. The stay_open mode
+        already eliminates process startup cost.
 
         Args:
             file_tags_pairs: List of (filepath, tags_dict) tuples.
