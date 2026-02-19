@@ -3,7 +3,6 @@
 import os
 import sys
 import unicodedata
-from functools import lru_cache
 from typing import Optional
 
 # Windows MAX_PATH limit (260 chars including null terminator)
@@ -127,11 +126,8 @@ def checkout_dir(path: str, onlynew: bool = False) -> str:
     return path
 
 
-@lru_cache(maxsize=10000)
 def get_album_name(filepath: str) -> str:
     """Get the name of the parent folder (album name).
-
-    Results are cached for performance when called repeatedly with same paths.
 
     Args:
         filepath: Full path to a file.

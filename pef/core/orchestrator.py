@@ -196,6 +196,10 @@ class PEFOrchestrator:
                 if metadata.has_people():
                     result.with_people += 1
             else:
+                logger.debug(
+                    "No matching media file for Takeout JSON (title=%s): %s",
+                    metadata.title, json_path
+                )
                 result.unmatched_json_count += 1
 
         result.unmatched_file_count = result.file_count - result.matched_count
@@ -374,7 +378,11 @@ class PEFOrchestrator:
                             if metadata.has_people():
                                 processor.stats.with_people += 1
                     else:
-                        # No matching file found - save JSON to unmatched_data
+                        # Valid Takeout JSON but no matching media file found
+                        logger.debug(
+                            "No matching media file for Takeout JSON (title=%s): %s",
+                            metadata.title, json_path
+                        )
                         unmatched_jsons.append(json_path)
 
                     # Mark this JSON as processed for resume capability
@@ -498,9 +506,15 @@ class PEFOrchestrator:
                 content = json.loads(raw.decode("utf-8"))
 
             if not content or "title" not in content:
+                logger.debug(
+                    "Skipping non-Takeout JSON (missing 'title' field): %s", path
+                )
                 return None
 
             if "photoTakenTime" not in content or "timestamp" not in content["photoTakenTime"]:
+                logger.debug(
+                    "Skipping non-Takeout JSON (missing 'photoTakenTime.timestamp'): %s", path
+                )
                 return None
 
             # Timestamp conversion: Google Takeout stores photoTakenTime as a UTC
@@ -518,8 +532,11 @@ class PEFOrchestrator:
                 people=Person.from_list(content.get("people")),
                 description=content.get("description", "")
             )
+        except (ValueError, KeyError, TypeError) as e:
+            logger.debug("Invalid/corrupt JSON %s: %s", path, e)
+            return None
         except Exception as e:
-            logger.debug(f"Error reading JSON {path}: {e}")
+            logger.debug("Error reading JSON %s: %s", path, e)
             return None
 
     # Threshold for switching from sequential to parallel JSON reading.
