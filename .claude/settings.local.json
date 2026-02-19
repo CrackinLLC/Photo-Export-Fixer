@@ -21,7 +21,9 @@
       "Bash(den-dev:*)",
       "Bash(pride-dev:*)",
       "Bash(forgecrew-dev:*)",
-      "Bash(gh:*)"
+      "Bash(gh:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run test:*)"
     ]
   },
   "enabledMcpjsonServers": ["den", "pride"],
