@@ -369,6 +369,94 @@ class TestPEFOrchestratorResume:
         assert result.output_dir != output_dir or "processing_state.json" in os.listdir(result.output_dir)
 
 
+class TestPEFOrchestratorFreshStartDirectoryReuse:
+    """Tests for fresh-start directory reuse (no prior state file)."""
+
+    def test_fresh_run_reuses_existing_empty_dir(self, sample_takeout, temp_dir):
+        """Existing empty directory should be reused directly (no '(2)' suffix)."""
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(output_dir)
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+                result = orchestrator.process()
+
+        assert result.output_dir == output_dir
+
+    def test_fresh_run_reuses_existing_nonempty_dir_without_pef(self, sample_takeout, temp_dir):
+        """Existing non-empty directory without _pef/ should be reused directly."""
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(output_dir)
+        # Put some non-PEF content in the directory
+        with open(os.path.join(output_dir, "readme.txt"), "w") as f:
+            f.write("some content")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+                result = orchestrator.process()
+
+        assert result.output_dir == output_dir
+
+    def test_fresh_run_creates_nonexistent_dir(self, sample_takeout, temp_dir):
+        """Non-existent directory should be created."""
+        output_dir = os.path.join(temp_dir, "new_output")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+                result = orchestrator.process()
+
+        assert result.output_dir == output_dir
+        assert os.path.isdir(output_dir)
+
+    def test_force_reuses_existing_dir(self, sample_takeout, temp_dir):
+        """Force mode with existing directory should reuse it."""
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(output_dir)
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+                result = orchestrator.process(force=True)
+
+        assert result.output_dir == output_dir
+
+    def test_completed_run_creates_new_dir(self, sample_takeout, temp_dir):
+        """Completed prior run should create a new directory with suffix."""
+        output_dir = os.path.join(temp_dir, "output")
+        os.makedirs(os.path.join(output_dir, "_pef"), exist_ok=True)
+
+        # Create completed state file
+        state_data = {
+            "version": 1,
+            "source_path": sample_takeout,
+            "status": "completed",
+            "processed_jsons": []
+        }
+        with open(os.path.join(output_dir, "_pef", "processing_state.json"), "w") as f:
+            json.dump(state_data, f)
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+                result = orchestrator.process()
+
+        # Should have created output(1) since output has completed state
+        assert result.output_dir != output_dir
+
+
 class TestPEFOrchestratorReadJson:
     """Tests for PEFOrchestrator._read_json() method."""
 
