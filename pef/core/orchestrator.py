@@ -285,10 +285,14 @@ class PEFOrchestrator:
 
         # Phase 1: Scan
         if on_progress:
-            on_progress(0, 100, "[1/3] Scanning files...")
+            on_progress(0, 0, "[1/3] Scanning files...")
+
+        def scan_progress(current, total, message):
+            if on_progress:
+                on_progress(current, 0, f"[1/3] {message}")
 
         scanner = FileScanner(self.source_path)
-        scanner.scan()
+        scanner.scan(on_progress=scan_progress if on_progress else None)
 
         # Initialize or update state manager (stored in _pef for resume)
         self._active_state = StateManager(pef_dir)

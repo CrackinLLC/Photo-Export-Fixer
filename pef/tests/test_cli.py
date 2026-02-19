@@ -200,9 +200,13 @@ class TestRunProcess:
             mock_result.errors = []
             mock_result.stats = mock_stats
             mock_result.elapsed_time = 1.5
-            mock_result.processed_dir = os.path.join(output, "Processed")
-            mock_result.unprocessed_dir = os.path.join(output, "Unprocessed")
-            mock_result.log_file = os.path.join(output, "logs.txt")
+            mock_result.output_dir = output
+            mock_result.pef_dir = os.path.join(output, "_pef")
+            mock_result.summary_file = os.path.join(output, "_pef", "summary.txt")
+            mock_result.resumed = False
+            mock_result.skipped_count = 0
+            mock_result.motion_photo_count = 0
+            mock_result.unprocessed_items = []
             mock_instance.process.return_value = mock_result
             MockOrch.return_value = mock_instance
 
@@ -349,14 +353,13 @@ class TestRunProcessResumeDisplay:
 
     def test_displays_resume_info(self, sample_takeout, temp_dir, capsys):
         """Verify resume info is displayed when resuming."""
-        from pef.core.models import ProcessResult, ProcessingStats
+        from pef.core.models import ProcessRunResult, ProcessingStats
 
-        mock_result = ProcessResult(
+        mock_result = ProcessRunResult(
             stats=ProcessingStats(processed=50),
             output_dir=temp_dir,
-            processed_dir=os.path.join(temp_dir, "Processed"),
-            unprocessed_dir=os.path.join(temp_dir, "Unprocessed"),
-            log_file=os.path.join(temp_dir, "logs.txt"),
+            pef_dir=os.path.join(temp_dir, "_pef"),
+            summary_file=os.path.join(temp_dir, "_pef", "summary.txt"),
             elapsed_time=10.5,
             start_time="2024-01-01 00:00:00",
             end_time="2024-01-01 00:00:10",
@@ -383,14 +386,13 @@ class TestRunProcessResumeDisplay:
 
     def test_no_resume_info_for_fresh_run(self, sample_takeout, temp_dir, capsys):
         """Verify no resume info for fresh runs."""
-        from pef.core.models import ProcessResult, ProcessingStats
+        from pef.core.models import ProcessRunResult, ProcessingStats
 
-        mock_result = ProcessResult(
+        mock_result = ProcessRunResult(
             stats=ProcessingStats(processed=50),
             output_dir=temp_dir,
-            processed_dir=os.path.join(temp_dir, "Processed"),
-            unprocessed_dir=os.path.join(temp_dir, "Unprocessed"),
-            log_file=os.path.join(temp_dir, "logs.txt"),
+            pef_dir=os.path.join(temp_dir, "_pef"),
+            summary_file=os.path.join(temp_dir, "_pef", "summary.txt"),
             elapsed_time=10.5,
             start_time="2024-01-01 00:00:00",
             end_time="2024-01-01 00:00:10",
@@ -439,8 +441,8 @@ class TestCLIWithRealOrchestrator:
 
         # Verify actual output was created
         assert os.path.exists(output_dir)
-        assert os.path.exists(os.path.join(output_dir, "Processed"))
-        assert os.path.exists(os.path.join(output_dir, "logs.txt"))
+        assert os.path.exists(os.path.join(output_dir, "Album1"))
+        assert os.path.exists(os.path.join(output_dir, "_pef"))
 
         # Verify output shows completion
         captured = capsys.readouterr()
@@ -477,13 +479,9 @@ class TestCLIWithRealOrchestrator:
                     write_exif=False
                 )
 
-        # Check Processed folder has album subfolders
-        processed_dir = os.path.join(output_dir, "Processed")
-        assert os.path.exists(processed_dir)
-
-        # Should have Album1 and Album2 from sample_takeout
-        album1 = os.path.join(processed_dir, "Album1")
-        album2 = os.path.join(processed_dir, "Album2")
+        # Check album subfolders directly under output
+        album1 = os.path.join(output_dir, "Album1")
+        album2 = os.path.join(output_dir, "Album2")
         assert os.path.exists(album1)
         assert os.path.exists(album2)
 

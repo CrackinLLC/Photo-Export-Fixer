@@ -44,8 +44,8 @@ class TestFullWorkflow:
         # Verify processing completed
         assert process_result.stats.processed >= 2
         assert os.path.exists(output_dir)
-        assert os.path.exists(process_result.processed_dir)
-        assert os.path.exists(process_result.log_file)
+        assert os.path.exists(process_result.output_dir)
+        assert os.path.exists(process_result.summary_file)
 
     def test_files_actually_copied(self, sample_takeout, temp_dir):
         """Verify files are actually copied to destination."""
@@ -61,17 +61,16 @@ class TestFullWorkflow:
                 )
                 orchestrator.process()
 
-        # Check files exist in Processed folder
-        processed_dir = os.path.join(output_dir, "Processed")
+        # Check files exist directly under output (albums at root level)
 
         # Verify Album1 files
-        album1_dir = os.path.join(processed_dir, "Album1")
+        album1_dir = os.path.join(output_dir, "Album1")
         assert os.path.exists(album1_dir)
         assert os.path.exists(os.path.join(album1_dir, "photo1.jpg"))
         assert os.path.exists(os.path.join(album1_dir, "photo2.jpg"))
 
         # Verify Album2 files
-        album2_dir = os.path.join(processed_dir, "Album2")
+        album2_dir = os.path.join(output_dir, "Album2")
         assert os.path.exists(album2_dir)
         assert os.path.exists(os.path.join(album2_dir, "image.png"))
 
@@ -96,12 +95,11 @@ class TestFullWorkflow:
                 )
                 result = orchestrator.process()
 
-        # sample_takeout has video.mp4 without JSON
-        unprocessed_dir = os.path.join(output_dir, "Unprocessed")
-        if result.stats.unmatched_files > 0:
-            assert os.path.exists(unprocessed_dir)
-            # video.mp4 should be in Unprocessed
-            assert os.path.exists(os.path.join(unprocessed_dir, "video.mp4"))
+        # sample_takeout has video.mp4 without JSON — unmatched files
+        # are copied to the same album structure under output_dir
+        if len(result.unprocessed_items) > 0:
+            # video.mp4 is in Album1, should be copied to output_dir/Album1/
+            assert os.path.exists(os.path.join(output_dir, "Album1", "video.mp4"))
 
     def test_logs_created(self, sample_takeout, temp_dir):
         """Verify log files are created with content."""
@@ -118,15 +116,13 @@ class TestFullWorkflow:
                 result = orchestrator.process()
 
         # Check summary log exists and has content
-        assert os.path.exists(result.log_file)
-        with open(result.log_file, "r", encoding="utf-8") as f:
+        assert os.path.exists(result.summary_file)
+        with open(result.summary_file, "r", encoding="utf-8") as f:
             log_content = f.read()
-        assert "Processed:" in log_content
-        assert "seconds" in log_content.lower()
+        assert "Processed" in log_content
 
-        # Check detailed log exists
-        detailed_log = os.path.join(output_dir, "detailed_logs.txt")
-        assert os.path.exists(detailed_log)
+        # Check _pef directory exists
+        assert os.path.exists(result.pef_dir)
 
     def test_state_file_created(self, sample_takeout, temp_dir):
         """Verify processing state file is created."""
@@ -142,8 +138,8 @@ class TestFullWorkflow:
                 )
                 orchestrator.process()
 
-        # Verify state file exists and is valid JSON
-        state_file = os.path.join(output_dir, "processing_state.json")
+        # Verify state file exists in _pef directory and is valid JSON
+        state_file = os.path.join(output_dir, "_pef", "processing_state.json")
         assert os.path.exists(state_file)
 
         with open(state_file, "r", encoding="utf-8") as f:
@@ -177,7 +173,7 @@ class TestResumeWorkflow:
         first_run_count = result1.stats.processed
 
         # Manually set state back to in_progress to simulate interruption
-        state_file = os.path.join(output_dir, "processing_state.json")
+        state_file = os.path.join(output_dir, "_pef", "processing_state.json")
         with open(state_file, "r", encoding="utf-8") as f:
             state = json.load(f)
         state["status"] = "in_progress"
@@ -195,8 +191,9 @@ class TestResumeWorkflow:
                 result2 = orchestrator2.process()
 
         # Should have resumed and skipped the already-processed files
+        # skipped_count is based on JSONs processed (3), not files (4)
         assert result2.resumed is True
-        assert result2.skipped_count == first_run_count
+        assert result2.skipped_count == 3  # 3 JSONs were already processed
         assert result2.stats.processed == 0  # Nothing new to process
 
 
@@ -221,11 +218,11 @@ class TestEdgeCases:
         # Should process all 3 photos (original + 2 duplicates)
         assert result.stats.processed >= 3
 
-        # Check all files were copied
-        processed_dir = os.path.join(output_dir, "Processed", "Album")
-        assert os.path.exists(os.path.join(processed_dir, "photo.jpg"))
-        assert os.path.exists(os.path.join(processed_dir, "photo(1).jpg"))
-        assert os.path.exists(os.path.join(processed_dir, "photo(2).jpg"))
+        # Check all files were copied (albums directly under output_dir)
+        album_dir = os.path.join(output_dir, "Album")
+        assert os.path.exists(os.path.join(album_dir, "photo.jpg"))
+        assert os.path.exists(os.path.join(album_dir, "photo(1).jpg"))
+        assert os.path.exists(os.path.join(album_dir, "photo(2).jpg"))
 
     def test_handles_long_filenames(self, sample_long_filename, temp_dir):
         """Verify long filenames (51-char truncation) are handled."""

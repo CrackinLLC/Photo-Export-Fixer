@@ -10,6 +10,7 @@ from pef.core.exiftool import (
     get_exiftool_path,
     is_exiftool_available,
     auto_download_exiftool,
+    _reset_exiftool_cache,
     ExifToolManager,
     EXIFTOOL_DIR,
     EXIFTOOL_EXE,
@@ -34,12 +35,14 @@ class TestGetExiftoolPath:
     """Tests for get_exiftool_path() function."""
 
     def test_finds_in_path(self):
+        _reset_exiftool_cache()
         with patch('shutil.which') as mock_which:
             mock_which.return_value = "/usr/bin/exiftool"
             result = get_exiftool_path()
 
             assert result == "exiftool"
             mock_which.assert_called_with("exiftool")
+        _reset_exiftool_cache()
 
     def test_finds_in_local_tools(self, temp_dir):
         # Create local tools directory with exe

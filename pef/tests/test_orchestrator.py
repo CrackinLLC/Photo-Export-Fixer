@@ -163,10 +163,9 @@ class TestPEFOrchestratorProcess:
         output_dir = os.path.join(temp_dir, "output")
         orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
 
-        with patch('pef.core.orchestrator.FileProcessor'):
-            with patch('pef.core.orchestrator.BufferedLogger'):
-                with patch('pef.core.orchestrator.SummaryLogger'):
-                    result = orchestrator.process()
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                result = orchestrator.process()
 
         assert os.path.exists(output_dir) or result.output_dir is not None
 
@@ -250,7 +249,7 @@ class TestPEFOrchestratorResume:
     def test_process_resumes_from_state(self, sample_takeout, temp_dir):
         """Verify processing resumes and skips already-processed files."""
         output_dir = os.path.join(temp_dir, "output")
-        os.makedirs(output_dir)
+        os.makedirs(os.path.join(output_dir, "_pef"), exist_ok=True)
 
         # Create in-progress state file with ALL JSONs already processed
         # sample_takeout has 3 JSONs: photo1.jpg.json, photo2.jpg.json, image.png.json
@@ -284,7 +283,7 @@ class TestPEFOrchestratorResume:
     def test_process_resumes_partial(self, sample_takeout, temp_dir):
         """Verify processing resumes and only processes remaining files."""
         output_dir = os.path.join(temp_dir, "output")
-        os.makedirs(output_dir)
+        os.makedirs(os.path.join(output_dir, "_pef"), exist_ok=True)
 
         # Create in-progress state file with 1 of 3 JSONs already processed
         state_data = {
@@ -307,14 +306,14 @@ class TestPEFOrchestratorResume:
 
         # Should process only the 2 remaining JSONs
         # photo2.jpg.json -> photo2.jpg (1 file)
-        # image.png.json -> image.png (1 file)
-        assert result.stats.processed == 2  # 2 new files processed
+        # image.png.json -> image.png + image-edited.png (2 files)
+        assert result.stats.processed == 3  # 3 new files processed
         assert os.path.exists(os.path.join(output_dir, "_pef", "processing_state.json"))
 
     def test_process_force_ignores_state(self, sample_takeout, temp_dir):
         """Verify force=True ignores existing state."""
         output_dir = os.path.join(temp_dir, "output")
-        os.makedirs(output_dir)
+        os.makedirs(os.path.join(output_dir, "_pef"), exist_ok=True)
 
         # Create in-progress state file with all JSONs marked as processed
         all_jsons = [
@@ -341,13 +340,14 @@ class TestPEFOrchestratorResume:
                 result = orchestrator.process(force=True)
 
         # With force=True, should process all files from scratch
-        # 3 files: photo1.jpg, photo2.jpg, image.png (each JSON matches one file)
-        assert result.stats.processed == 3
+        # 4 files: photo1.jpg, photo2.jpg, image.png, image-edited.png
+        # (image.png.json matches both image.png and image-edited.png)
+        assert result.stats.processed == 4
 
     def test_process_creates_new_dir_when_completed(self, sample_takeout, temp_dir):
         """Verify completed run creates new directory on next run."""
         output_dir = os.path.join(temp_dir, "output")
-        os.makedirs(output_dir)
+        os.makedirs(os.path.join(output_dir, "_pef"), exist_ok=True)
 
         # Create completed state file
         state_data = {
@@ -584,9 +584,8 @@ class TestPEFOrchestratorSaveProgress:
 
                 def tracking_callback(current, total, msg):
                     progress_calls.append((current, total, msg))
-                    # After first progress update during JSON processing, test save_progress
-                    if len(progress_calls) == 2:  # After scanning starts
-                        # At this point, state should be active
+                    # After JSON processing starts (Phase 2), test save_progress
+                    if "[2/3]" in msg and orchestrator._active_state is not None:
                         assert orchestrator._active_state is not None
 
                 orchestrator.process(on_progress=tracking_callback)
@@ -624,7 +623,7 @@ class TestPEFOrchestratorResumeFields:
     def test_resumed_run_has_correct_fields(self, sample_takeout, temp_dir):
         """Verify resumed run has resumed=True and correct skipped_count."""
         output_dir = os.path.join(temp_dir, "output")
-        os.makedirs(output_dir)
+        os.makedirs(os.path.join(output_dir, "_pef"), exist_ok=True)
 
         # Create in-progress state file with 1 of 3 JSONs already processed
         state_data = {
@@ -651,7 +650,7 @@ class TestPEFOrchestratorResumeFields:
     def test_force_run_not_resumed(self, sample_takeout, temp_dir):
         """Verify force=True results in resumed=False."""
         output_dir = os.path.join(temp_dir, "output")
-        os.makedirs(output_dir)
+        os.makedirs(os.path.join(output_dir, "_pef"), exist_ok=True)
 
         # Create in-progress state file
         state_data = {

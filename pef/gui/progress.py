@@ -53,16 +53,26 @@ class ProgressDialog:
 
         Args:
             current: Current progress value.
-            total: Total progress value.
+            total: Total progress value. Use 0 or negative for indeterminate mode.
             message: Status message.
         """
-        if total > 0:
+        if total <= 0:
+            # Indeterminate mode — pulsing bar, show file count
+            if self.progress["mode"] != "indeterminate":
+                self.progress.configure(mode="indeterminate")
+                self.progress.start(15)
+            self.percent_var.set(f"{current:,} files" if current > 0 else "")
+        else:
+            # Determinate mode — normal percentage
+            if self.progress["mode"] != "determinate":
+                self.progress.stop()
+                self.progress.configure(mode="determinate")
             percent = int((current / total) * 100)
             self.progress["value"] = percent
             self.percent_var.set(f"{percent}%")
 
         # Truncate long messages
-        display_msg = message[:50] + "..." if len(message) > 50 else message
+        display_msg = message[:60] + "..." if len(message) > 60 else message
         self.status_var.set(display_msg)
 
         self.dialog.update_idletasks()

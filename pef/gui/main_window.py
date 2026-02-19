@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -445,8 +446,14 @@ class PEFMainWindow:
             success = False
             try:
                 orchestrator = self._create_orchestrator()
+                last_update = [0.0]
 
                 def progress_cb(c, t, m):
+                    now = time.monotonic()
+                    # Throttle to ~8 updates/sec; always allow final/completion updates
+                    if now - last_update[0] < 0.12 and t > 0 and c < t:
+                        return
+                    last_update[0] = now
                     self.root.after(0, lambda c=c, t=t, m=m: progress.update(c, t, m))
 
                 result = operation(orchestrator, progress_cb)
