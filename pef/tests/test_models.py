@@ -113,11 +113,37 @@ class TestPerson:
     def test_from_list_none(self):
         assert Person.from_list(None) == []
 
-    def test_from_list_filters_invalid(self):
+    def test_from_list_filters_missing_name_key(self):
         data = [{"name": "Alice"}, {"other": "data"}, {"name": "Bob"}]
         people = Person.from_list(data)
 
         assert len(people) == 2
+
+    def test_from_list_filters_empty_names(self):
+        """Empty name strings should be filtered out."""
+        data = [{"name": "Alice"}, {"name": ""}, {"name": "Bob"}]
+        people = Person.from_list(data)
+
+        assert len(people) == 2
+        assert people[0].name == "Alice"
+        assert people[1].name == "Bob"
+
+    def test_from_list_filters_whitespace_only_names(self):
+        """Whitespace-only names should be filtered out."""
+        data = [{"name": "  "}, {"name": "Valid"}]
+        people = Person.from_list(data)
+
+        assert len(people) == 1
+        assert people[0].name == "Valid"
+
+    def test_from_list_strips_whitespace_from_names(self):
+        """Leading/trailing whitespace should be stripped from valid names."""
+        data = [{"name": "  Alice  "}, {"name": "Bob "}]
+        people = Person.from_list(data)
+
+        assert len(people) == 2
+        assert people[0].name == "Alice"
+        assert people[1].name == "Bob"
 
 
 class TestJsonMetadata:
