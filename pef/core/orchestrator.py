@@ -274,12 +274,13 @@ class PEFOrchestrator:
             logger.info("Previous run completed. Creating new output directory.")
             output_dir = checkout_dir(self.dest_path, onlynew=True)
         else:
-            # Fresh start or force
-            if exists(self.dest_path) and force:
-                # Force mode with existing directory - reuse it
+            # Fresh start or force — no prior state file exists
+            if exists(self.dest_path):
+                # Directory exists but no prior state — safe to reuse
                 output_dir = self.dest_path
             else:
-                output_dir = checkout_dir(self.dest_path, onlynew=True)
+                # Directory doesn't exist — create it
+                output_dir = checkout_dir(self.dest_path)
 
         # Create _pef directory for all metadata/logs
         pef_dir = os.path.join(output_dir, PEF_DIR_NAME)

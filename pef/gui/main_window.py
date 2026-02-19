@@ -259,7 +259,7 @@ class PEFMainWindow:
 
         dest_hint = ttk.Label(
             header_frame,
-            text="Leave empty to auto-create next to source folder",
+            text="Leave empty to auto-create, or type any path (will be created if needed)",
             font=("", 8),
             foreground="gray"
         )
