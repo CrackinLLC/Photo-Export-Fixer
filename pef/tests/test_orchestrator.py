@@ -563,6 +563,108 @@ class TestPEFOrchestratorErrorHandling:
         assert "Access denied" in str(result.errors[0]) or "Error" in str(result.errors[0])
 
 
+class TestCopyUnmatchedJsonsIOErrors:
+    """Tests for I/O error handling in _copy_unmatched_jsons()."""
+
+    def test_copy_failure_continues_loop(self, temp_dir):
+        """Verify _copy_unmatched_jsons continues after individual copy failure."""
+        # Create source JSON files
+        album = os.path.join(temp_dir, "Album1")
+        os.makedirs(album)
+
+        json_paths = []
+        for i in range(3):
+            path = os.path.join(album, f"file{i}.json")
+            with open(path, "w") as f:
+                json.dump({"title": f"file{i}"}, f)
+            json_paths.append(path)
+
+        pef_dir = os.path.join(temp_dir, "output", "_pef")
+        os.makedirs(pef_dir, exist_ok=True)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+
+        # Make second copy fail
+        call_count = 0
+        import shutil as shutil_mod
+        original_copy = shutil_mod.copy
+
+        def selective_fail(src, dst):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise OSError("permission denied")
+            return original_copy(src, dst)
+
+        with patch('pef.core.orchestrator.shutil.copy', side_effect=selective_fail):
+            orchestrator._copy_unmatched_jsons(json_paths, pef_dir)
+
+        # Should have attempted all 3 copies (not stopped at failure)
+        assert call_count == 3
+
+        # Files 1 and 3 should exist, file 2 should not
+        unmatched_dir = os.path.join(pef_dir, "unmatched_data")
+        copied_files = []
+        for root, dirs, files in os.walk(unmatched_dir):
+            copied_files.extend(files)
+        assert len(copied_files) == 2
+
+
+class TestUnmatchedFileCopyIOErrors:
+    """Tests for I/O error handling in orchestrator unmatched file loop."""
+
+    def test_unmatched_file_copy_error_continues_loop(self, temp_dir):
+        """Verify orchestrator continues copying unmatched files after a failure."""
+        album = os.path.join(temp_dir, "Album1")
+        os.makedirs(album)
+
+        # Create files without matching JSONs (they'll all be unmatched)
+        for i in range(3):
+            with open(os.path.join(album, f"photo{i}.jpg"), "wb") as f:
+                f.write(f"data{i}".encode())
+
+        output_dir = os.path.join(temp_dir, "output")
+
+        # Make copy_unmatched_file raise on the second file
+        call_count = 0
+        original_method = None
+
+        def failing_copy(file_info, reason="No matching JSON found"):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise OSError("disk full")
+            return original_method(file_info, reason)
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                orchestrator = PEFOrchestrator(
+                    temp_dir, dest_path=output_dir, write_exif=False
+                )
+
+                # We need to intercept copy_unmatched_file on the processor instance
+                # Use a simpler approach: patch shutil.copy to fail on one specific call
+                copy_count = 0
+                import shutil as shutil_mod
+                orig_copy = shutil_mod.copy
+
+                def selective_copy_fail(src, dst):
+                    nonlocal copy_count
+                    copy_count += 1
+                    # Fail on the 5th copy call (the 2nd unmatched file)
+                    # First copies are for matched files in process phase
+                    if "photo1" in src:
+                        raise OSError("disk full")
+                    return orig_copy(src, dst)
+
+                with patch('pef.core.processor.shutil.copy', side_effect=selective_copy_fail):
+                    result = orchestrator.process()
+
+                # Should have errors recorded but processing should complete
+                assert len(result.errors) >= 1
+                assert any("disk full" in str(e) for e in result.errors)
+
+
 class TestPEFOrchestratorSaveProgress:
     """Tests for PEFOrchestrator.save_progress() method."""
 

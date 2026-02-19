@@ -395,7 +395,11 @@ class PEFOrchestrator:
                     if on_progress and i % unmatched_interval == 0:
                         on_progress(i, len(unmatched_files), f"[3/3] Copying: {file_info.filename}")
 
-                    processor.copy_unmatched_file(file_info)
+                    try:
+                        processor.copy_unmatched_file(file_info)
+                    except Exception as e:
+                        logger.warning(f"Failed to copy unmatched file {file_info.filepath}: {e}")
+                        result.errors.append(f"Error copying {file_info.filepath}: {e}")
 
                 result.stats = processor.stats
                 result.unprocessed_items = processor.unprocessed_items
@@ -468,7 +472,10 @@ class PEFOrchestrator:
             dest_dir = os.path.dirname(dest_path)
 
             os.makedirs(dest_dir, exist_ok=True)
-            shutil.copy(json_path, dest_path)
+            try:
+                shutil.copy(json_path, dest_path)
+            except OSError as e:
+                logger.warning(f"Failed to copy unmatched JSON {json_path}: {e}")
 
     def _read_json(self, path: str) -> Optional[JsonMetadata]:
         """Read and parse a JSON metadata file.
