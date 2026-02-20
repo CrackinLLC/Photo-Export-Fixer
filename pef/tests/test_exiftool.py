@@ -10,10 +10,12 @@ from pef.core.exiftool import (
     get_exiftool_path,
     is_exiftool_available,
     auto_download_exiftool,
+    validate_exiftool,
     _reset_exiftool_cache,
     ExifToolManager,
     EXIFTOOL_DIR,
     EXIFTOOL_EXE,
+    STARTUP_TIMEOUT,
 )
 
 
@@ -31,6 +33,63 @@ class TestExiftoolConstants:
             assert EXIFTOOL_EXE == "exiftool"
 
 
+class TestValidateExiftool:
+    """Tests for validate_exiftool() function."""
+
+    def test_valid_exiftool_returns_version(self):
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "12.50\n"
+        mock_result.stderr = ""
+        with patch('subprocess.run', return_value=mock_result):
+            version = validate_exiftool("/usr/bin/exiftool")
+            assert version == "12.50"
+
+    def test_valid_version_with_patch(self):
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "13.06\n"
+        mock_result.stderr = ""
+        with patch('subprocess.run', return_value=mock_result):
+            version = validate_exiftool("/usr/bin/exiftool")
+            assert version == "13.06"
+
+    def test_invalid_output_returns_none(self):
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "This is not exiftool\n"
+        mock_result.stderr = ""
+        with patch('subprocess.run', return_value=mock_result):
+            assert validate_exiftool("/usr/bin/exiftool") is None
+
+    def test_nonzero_returncode_returns_none(self):
+        mock_result = Mock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "error"
+        with patch('subprocess.run', return_value=mock_result):
+            assert validate_exiftool("/usr/bin/exiftool") is None
+
+    def test_timeout_returns_none(self):
+        import subprocess
+        with patch('subprocess.run', side_effect=subprocess.TimeoutExpired("exiftool", STARTUP_TIMEOUT)):
+            assert validate_exiftool("/usr/bin/exiftool") is None
+
+    def test_oserror_returns_none(self):
+        with patch('subprocess.run', side_effect=OSError("No such file")):
+            assert validate_exiftool("/usr/bin/exiftool") is None
+
+    def test_uses_correct_timeout(self):
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "12.50\n"
+        mock_result.stderr = ""
+        with patch('subprocess.run', return_value=mock_result) as mock_run:
+            validate_exiftool("/usr/bin/exiftool")
+            call_kwargs = mock_run.call_args[1]
+            assert call_kwargs['timeout'] == STARTUP_TIMEOUT
+
+
 class TestGetExiftoolPath:
     """Tests for get_exiftool_path() function."""
 
@@ -38,10 +97,11 @@ class TestGetExiftoolPath:
         _reset_exiftool_cache()
         with patch('shutil.which') as mock_which:
             mock_which.return_value = "/usr/bin/exiftool"
-            result = get_exiftool_path()
+            with patch('pef.core.exiftool.validate_exiftool', return_value="12.50"):
+                result = get_exiftool_path()
 
-            assert result == "exiftool"
-            mock_which.assert_called_with("exiftool")
+                assert result == "exiftool"
+                mock_which.assert_called_with("exiftool")
         _reset_exiftool_cache()
 
     def test_finds_in_local_tools(self, temp_dir):
@@ -54,9 +114,34 @@ class TestGetExiftoolPath:
 
         with patch('shutil.which') as mock_which:
             mock_which.return_value = None  # Not in PATH
-            result = get_exiftool_path(base_dir=temp_dir)
+            with patch('pef.core.exiftool.validate_exiftool', return_value="12.50"):
+                result = get_exiftool_path(base_dir=temp_dir)
 
-            assert result == exe_path
+                assert result == exe_path
+
+    def test_rejects_invalid_exiftool_in_path(self):
+        _reset_exiftool_cache()
+        with patch('shutil.which') as mock_which:
+            mock_which.return_value = "/usr/bin/exiftool"
+            with patch('pef.core.exiftool.validate_exiftool', return_value=None):
+                with patch('pef.core.exiftool.auto_download_exiftool', return_value=False):
+                    result = get_exiftool_path()
+                    assert result is None
+        _reset_exiftool_cache()
+
+    def test_rejects_invalid_local_exiftool(self, temp_dir):
+        tools_dir = os.path.join(temp_dir, EXIFTOOL_DIR)
+        os.makedirs(tools_dir)
+        exe_path = os.path.join(tools_dir, EXIFTOOL_EXE)
+        with open(exe_path, "w") as f:
+            f.write("fake exe")
+
+        with patch('shutil.which') as mock_which:
+            mock_which.return_value = None
+            with patch('pef.core.exiftool.validate_exiftool', return_value=None):
+                with patch('pef.core.exiftool.auto_download_exiftool', return_value=False):
+                    result = get_exiftool_path(base_dir=temp_dir)
+                    assert result is None
 
     def test_returns_none_when_not_found(self, temp_dir):
         with patch('shutil.which') as mock_which:
@@ -74,7 +159,8 @@ class TestIsExiftoolAvailable:
     def test_true_when_in_path(self):
         with patch('shutil.which') as mock_which:
             mock_which.return_value = "/usr/bin/exiftool"
-            assert is_exiftool_available() is True
+            with patch('pef.core.exiftool.validate_exiftool', return_value="12.50"):
+                assert is_exiftool_available() is True
 
     def test_true_when_in_local_tools(self, temp_dir):
         # Create local tools directory with exe
@@ -151,6 +237,8 @@ class TestExifToolManager:
 
             assert result is False
             assert manager.is_running is False
+            assert manager.start_error is not None
+            assert "not found" in manager.start_error.lower() or "not working" in manager.start_error.lower()
 
     def test_start_without_pyexiftool(self):
         with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
@@ -180,6 +268,24 @@ class TestExifToolManager:
                 pass
 
             # stop() should have been called even if start failed
+
+    def test_start_sets_error_on_exception(self):
+        mock_module = MagicMock()
+        mock_helper = MagicMock()
+        mock_helper.run.side_effect = Exception("process failed")
+        mock_module.ExifToolHelper.return_value = mock_helper
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                result = manager.start()
+
+                assert result is False
+                assert manager.start_error is not None
+                assert "failed to start" in manager.start_error.lower()
+                assert manager._helper is None
 
     def test_write_tags_returns_false_when_not_running(self):
         manager = ExifToolManager()

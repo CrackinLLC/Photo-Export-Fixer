@@ -90,13 +90,21 @@ class FileProcessor:
         # Cache for created directories (avoids redundant os.makedirs calls)
         self._created_dirs: set = set()
 
-    def start(self) -> None:
-        """Start the processor (initialize ExifTool if needed)."""
+    def start(self) -> Optional[str]:
+        """Start the processor (initialize ExifTool if needed).
+
+        Returns:
+            Error message if ExifTool failed to start and write_exif was
+            requested, or None on success.
+        """
         if self.write_exif:
             self._exiftool = ExifToolManager()
             if not self._exiftool.start():
+                error = self._exiftool.start_error
                 self._exiftool = None
                 self.write_exif = False
+                return error
+        return None
 
     def stop(self) -> None:
         """Stop the processor (cleanup ExifTool)."""
@@ -106,7 +114,7 @@ class FileProcessor:
 
     def __enter__(self) -> "FileProcessor":
         """Context manager entry."""
-        self.start()
+        self.exiftool_error = self.start()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

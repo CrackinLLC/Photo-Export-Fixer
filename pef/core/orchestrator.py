@@ -362,6 +362,8 @@ class PEFOrchestrator:
                 verbose=self.verbose,
                 rename_mp=self.rename_mp
             ) as processor:
+                if processor.exiftool_error:
+                    result.errors.append(f"ExifTool: {processor.exiftool_error}")
                 matcher = FileMatcher(scanner.file_index, self.suffixes, scanner.lowercase_index)
 
                 total = len(jsons_to_process)

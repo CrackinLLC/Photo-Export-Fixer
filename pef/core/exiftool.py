@@ -5,7 +5,9 @@ Handles finding, downloading, and initializing ExifTool.
 
 import logging
 import os
+import re
 import shutil
+import subprocess
 import sys
 from typing import Optional, List, Tuple
 
@@ -14,6 +16,9 @@ logger = logging.getLogger(__name__)
 # ExifTool paths
 EXIFTOOL_DIR = os.path.join("tools", "exiftool")
 EXIFTOOL_EXE = "exiftool.exe" if sys.platform == "win32" else "exiftool"
+
+# Timeout for ExifTool startup validation (seconds)
+STARTUP_TIMEOUT = 10
 
 # Module-level cache for exiftool path (avoids repeated filesystem checks)
 _exiftool_path_cache: Optional[str] = None
@@ -109,6 +114,46 @@ def _reset_exiftool_cache() -> None:
     _exiftool_path_checked = False
 
 
+def validate_exiftool(exe_path: str) -> Optional[str]:
+    """Validate that an ExifTool executable actually works.
+
+    Runs ``exiftool -ver`` and checks for a valid version string response.
+
+    Args:
+        exe_path: Path to the ExifTool executable.
+
+    Returns:
+        Version string (e.g. "12.50") on success, or None if validation fails.
+    """
+    try:
+        kwargs = {
+            "capture_output": True,
+            "text": True,
+            "timeout": STARTUP_TIMEOUT,
+        }
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        result = subprocess.run([exe_path, "-ver"], **kwargs)
+        version = result.stdout.strip()
+        if result.returncode == 0 and re.match(r"^\d+\.\d+", version):
+            return version
+        stderr = result.stderr.strip()
+        logger.warning(
+            f"ExifTool at {exe_path} returned unexpected output "
+            f"(rc={result.returncode}): {version or stderr}"
+        )
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            f"ExifTool at {exe_path} timed out after {STARTUP_TIMEOUT}s — "
+            "may be corrupted or wrong version"
+        )
+        return None
+    except OSError as e:
+        logger.warning(f"ExifTool at {exe_path} could not be executed: {e}")
+        return None
+
+
 def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
     """Find ExifTool executable.
 
@@ -137,12 +182,19 @@ def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
     if use_cache and _exiftool_path_checked:
         return _exiftool_path_cache
 
-    # 1. Check system PATH
-    if shutil.which("exiftool"):
+    def _cache_and_return(path: Optional[str]) -> Optional[str]:
+        global _exiftool_path_cache, _exiftool_path_checked
         if use_cache:
-            _exiftool_path_cache = "exiftool"
+            _exiftool_path_cache = path
             _exiftool_path_checked = True
-        return "exiftool"
+        return path
+
+    # 1. Check system PATH
+    system_path = shutil.which("exiftool")
+    if system_path:
+        if validate_exiftool(system_path):
+            return _cache_and_return("exiftool")
+        logger.warning("ExifTool found in PATH but failed validation")
 
     # 2. Check local tools folder
     if base_dir is None:
@@ -151,26 +203,24 @@ def get_exiftool_path(base_dir: Optional[str] = None) -> Optional[str]:
 
     local_path = os.path.join(base_dir, EXIFTOOL_DIR, EXIFTOOL_EXE)
     if os.path.exists(local_path):
-        if use_cache:
-            _exiftool_path_cache = local_path
-            _exiftool_path_checked = True
-        return local_path
+        if validate_exiftool(local_path):
+            return _cache_and_return(local_path)
+        logger.warning(
+            f"ExifTool found at {local_path} but failed validation — "
+            "may be corrupted or require Perl"
+        )
 
     # 3. Attempt auto-download (Windows only)
     if sys.platform == "win32":
         if auto_download_exiftool(base_dir):
-            if use_cache:
-                _exiftool_path_cache = local_path
-                _exiftool_path_checked = True
-            return local_path
+            if validate_exiftool(local_path):
+                return _cache_and_return(local_path)
+            logger.warning("Auto-downloaded ExifTool failed validation")
 
     # Not found - log warning but don't print full instructions here
     # (let the CLI handle user-facing output)
-    logger.warning("ExifTool not found")
-    if use_cache:
-        _exiftool_path_cache = None
-        _exiftool_path_checked = True
-    return None
+    logger.warning("ExifTool not found or not working")
+    return _cache_and_return(None)
 
 
 def auto_download_exiftool(base_dir: str) -> bool:
@@ -297,17 +347,28 @@ class ExifToolManager:
     def start(self) -> bool:
         """Start ExifTool process.
 
+        Validates the ExifTool binary before starting the persistent process.
+        Sets ``self.start_error`` with a user-facing message on failure.
+
         Returns:
             True if started successfully, False otherwise.
         """
+        self.start_error: Optional[str] = None
+
         try:
             import exiftool
         except ImportError:
-            logger.warning("pyexiftool not installed. Run: pip install pyexiftool")
+            self.start_error = "pyexiftool not installed. Run: pip install pyexiftool"
+            logger.warning(self.start_error)
             return False
 
         self._exiftool_path = get_exiftool_path(self._base_dir)
         if not self._exiftool_path:
+            self.start_error = (
+                "ExifTool not found or not working. "
+                "It may be missing, corrupted, or the wrong version (e.g. Perl-based instead of standalone)."
+            )
+            logger.warning(self.start_error)
             return False
 
         try:
@@ -319,7 +380,11 @@ class ExifToolManager:
             self._helper.run()
             return True
         except Exception as e:
-            logger.error(f"Failed to start ExifTool: {e}")
+            self.start_error = (
+                f"ExifTool failed to start — may be corrupted or wrong version: {e}"
+            )
+            logger.error(self.start_error)
+            self._helper = None
             return False
 
     def stop(self) -> None:
