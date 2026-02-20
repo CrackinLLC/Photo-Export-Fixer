@@ -153,7 +153,7 @@ class FileProcessor:
             Dict of ExifTool tags, empty if no metadata to write.
         """
         # Early return if no metadata to write
-        if not metadata.geo_data and not metadata.people:
+        if not metadata.geo_data and not metadata.people and not metadata.description:
             return {}
 
         tags = {}
@@ -163,6 +163,11 @@ class FileProcessor:
 
         if metadata.people:
             tags.update(build_people_tags(metadata.people))
+
+        if metadata.description:
+            tags["ImageDescription"] = metadata.description
+            tags["Caption-Abstract"] = metadata.description
+            tags["Description"] = metadata.description
 
         return tags
 

@@ -578,3 +578,80 @@ class TestFileProcessorBatching:
                 assert count == 0
                 assert processor.pending_writes_count == 0
                 assert processor.stats.errors == 3
+
+
+class TestBuildTagsDescription:
+    """Tests for _build_tags description/caption writing."""
+
+    def test_description_written_to_exif_tags(self, temp_dir):
+        """Verify description is written to ImageDescription, Caption-Abstract, and Description tags."""
+        metadata = JsonMetadata(
+            filepath="/test.json",
+            title="photo.jpg",
+            date=datetime(2021, 1, 1),
+            description="My vacation photo",
+        )
+
+        with FileProcessor(temp_dir, write_exif=False) as processor:
+            tags = processor._build_tags(metadata)
+
+        assert tags["ImageDescription"] == "My vacation photo"
+        assert tags["Caption-Abstract"] == "My vacation photo"
+        assert tags["Description"] == "My vacation photo"
+
+    def test_empty_description_no_tags(self, temp_dir):
+        """Verify empty description does not add description tags."""
+        metadata = JsonMetadata(
+            filepath="/test.json",
+            title="photo.jpg",
+            date=datetime(2021, 1, 1),
+            description="",
+        )
+
+        with FileProcessor(temp_dir, write_exif=False) as processor:
+            tags = processor._build_tags(metadata)
+
+        assert tags == {}
+        assert "ImageDescription" not in tags
+        assert "Caption-Abstract" not in tags
+        assert "Description" not in tags
+
+    def test_description_only_no_gps_no_people(self, temp_dir):
+        """Verify description-only metadata still produces tags (not early-returned)."""
+        metadata = JsonMetadata(
+            filepath="/test.json",
+            title="photo.jpg",
+            date=datetime(2021, 1, 1),
+            description="A beautiful sunset",
+        )
+
+        with FileProcessor(temp_dir, write_exif=False) as processor:
+            tags = processor._build_tags(metadata)
+
+        assert len(tags) == 3
+        assert tags["ImageDescription"] == "A beautiful sunset"
+        assert tags["Caption-Abstract"] == "A beautiful sunset"
+        assert tags["Description"] == "A beautiful sunset"
+
+    def test_description_combined_with_gps_and_people(self, temp_dir):
+        """Verify description tags coexist with GPS and people tags."""
+        metadata = JsonMetadata(
+            filepath="/test.json",
+            title="photo.jpg",
+            date=datetime(2021, 1, 1),
+            geo_data=GeoData(40.7128, -74.0060, 10),
+            people=[Person("Alice")],
+            description="Family photo at the park",
+        )
+
+        with FileProcessor(temp_dir, write_exif=False) as processor:
+            tags = processor._build_tags(metadata)
+
+        # GPS tags present
+        assert "GPSLatitude" in tags
+        # People tags present
+        assert "PersonInImage" in tags
+        # Description tags present
+        assert tags["ImageDescription"] == "Family photo at the park"
+        assert tags["Caption-Abstract"] == "Family photo at the park"
+        assert tags["Description"] == "Family photo at the park"
