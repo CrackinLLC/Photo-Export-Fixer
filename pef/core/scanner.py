@@ -2,6 +2,7 @@
 
 import logging
 import os
+import threading
 from typing import Dict, List, Tuple, Optional, Iterator
 
 from pef.core.models import FileInfo, FileIndex, ProgressCallback
@@ -73,7 +74,11 @@ class FileScanner:
         self.lowercase_index: FileIndex = {}
         self._scanned = False
 
-    def scan(self, on_progress: Optional[ProgressCallback] = None) -> None:
+    def scan(
+        self,
+        on_progress: Optional[ProgressCallback] = None,
+        cancel_event: Optional[threading.Event] = None
+    ) -> None:
         """Scan the directory tree for JSON and media files.
 
         Uses single-pass scanning with os.scandir for best performance.
@@ -81,6 +86,9 @@ class FileScanner:
         Args:
             on_progress: Optional callback for progress updates.
                         Called with (current_count, estimated_total, message).
+            cancel_event: Optional threading.Event for cooperative cancellation.
+                When set, scanning stops at the next directory boundary.
+                Partial results are still valid (self._scanned is set to True).
 
         Note:
             Progress shows files discovered rather than percentage complete,
@@ -99,6 +107,9 @@ class FileScanner:
         last_dir = ""
 
         for dirpath, dirnames, filenames in _fast_walk(self.path):
+            if cancel_event and cancel_event.is_set():
+                break
+
             # Normalize album name for consistent matching across platforms
             # (macOS uses NFD, Windows/Linux use NFC)
             album_name = normalize_filename(os.path.basename(dirpath))
