@@ -167,7 +167,14 @@ class PEFOrchestrator:
             on_progress(0, 0, "[1/2] Scanning files...")
 
         scanner = FileScanner(self.source_path)
-        scanner.scan(on_progress)
+        scanner.scan(on_progress, cancel_event=cancel_event)
+
+        # Check cancel after scan phase
+        if cancel_event and cancel_event.is_set():
+            result.cancelled = True
+            if on_progress:
+                on_progress(0, 0, "Preview cancelled")
+            return result
 
         result.json_count = scanner.json_count
         result.file_count = scanner.file_count
@@ -348,7 +355,16 @@ class PEFOrchestrator:
                     on_progress(current, 0, f"[1/3] {message}")
 
             scanner = FileScanner(self.source_path)
-            scanner.scan(on_progress=scan_progress if on_progress else None)
+            scanner.scan(on_progress=scan_progress if on_progress else None, cancel_event=cancel_event)
+
+        # Check cancel after scan phase
+        if cancel_event and cancel_event.is_set():
+            end_time = time.time()
+            result.cancelled = True
+            result.elapsed_time = round(end_time - start_time, 3)
+            result.end_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            self._clear_cache()
+            return result
 
         # Initialize or update state manager (stored in _pef for resume)
         self._active_state = StateManager(pef_dir)
@@ -517,7 +533,7 @@ class PEFOrchestrator:
 
             # Phase 4: Copy unmatched JSONs to _pef/unmatched_data/
             if unmatched_jsons:
-                self._copy_unmatched_jsons(unmatched_jsons, pef_dir, on_progress)
+                self._copy_unmatched_jsons(unmatched_jsons, pef_dir, on_progress, cancel_event=cancel_event)
 
             # Write summary
             end_time = time.time()
@@ -632,7 +648,8 @@ class PEFOrchestrator:
         self,
         json_paths: List[str],
         pef_dir: str,
-        on_progress: Optional[ProgressCallback] = None
+        on_progress: Optional[ProgressCallback] = None,
+        cancel_event: Optional[threading.Event] = None
     ) -> None:
         """Copy unmatched JSON files to _pef/unmatched_data/ preserving structure.
 
@@ -640,10 +657,13 @@ class PEFOrchestrator:
             json_paths: List of unmatched JSON file paths.
             pef_dir: Path to the _pef directory.
             on_progress: Optional progress callback.
+            cancel_event: Optional threading.Event for cooperative cancellation.
         """
         unmatched_data_dir = os.path.join(pef_dir, "unmatched_data")
 
         for json_path in json_paths:
+            if cancel_event and cancel_event.is_set():
+                break
             # Get relative path from source to preserve structure
             try:
                 rel_path = os.path.relpath(json_path, self.source_path)

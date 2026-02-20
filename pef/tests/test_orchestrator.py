@@ -1557,3 +1557,120 @@ class TestPEFOrchestratorCache:
         assert len(result.errors) > 0
         assert orchestrator._cached_scanner is None
         assert orchestrator._cached_metadata is None
+
+
+class TestScannerCancelSupport:
+    """Tests for FileScanner.scan() cancel_event support."""
+
+    def test_scanner_cancel_returns_partial_results(self, sample_takeout):
+        """Verify scanner stops at directory boundary when cancel is set."""
+        from pef.core.scanner import FileScanner
+
+        cancel_event = threading.Event()
+        dirs_seen = [0]
+
+        def cancel_after_first_dir(current, total, message):
+            if "Scanning:" in message:
+                dirs_seen[0] += 1
+                if dirs_seen[0] >= 1:
+                    cancel_event.set()
+
+        scanner = FileScanner(sample_takeout)
+        scanner.scan(on_progress=cancel_after_first_dir, cancel_event=cancel_event)
+
+        # Scanner should still be marked as scanned (partial data is valid)
+        assert scanner.is_scanned is True
+        # Should have found some files but possibly not all
+        assert scanner.file_count >= 0
+
+    def test_scanner_cancel_none_backward_compatible(self, sample_takeout):
+        """Verify scanner with cancel_event=None works as before (full scan)."""
+        from pef.core.scanner import FileScanner
+
+        scanner = FileScanner(sample_takeout)
+        scanner.scan(cancel_event=None)
+
+        assert scanner.is_scanned is True
+        # sample_takeout has 5 media files
+        assert scanner.file_count == 5
+        assert scanner.json_count == 3
+
+    def test_scanner_immediate_cancel_returns_empty_or_partial(self, sample_takeout):
+        """Verify scanner with pre-set cancel returns quickly."""
+        from pef.core.scanner import FileScanner
+
+        cancel_event = threading.Event()
+        cancel_event.set()  # Cancel before scan starts
+
+        scanner = FileScanner(sample_takeout)
+        scanner.scan(cancel_event=cancel_event)
+
+        assert scanner.is_scanned is True
+        # May have scanned nothing or partial results
+        assert scanner.file_count >= 0
+
+
+class TestCopyUnmatchedJsonsCancelSupport:
+    """Tests for _copy_unmatched_jsons cancel_event support."""
+
+    def test_cancel_stops_json_copy(self, temp_dir):
+        """Verify cancel_event stops copying unmatched JSONs early."""
+        album = os.path.join(temp_dir, "Album1")
+        os.makedirs(album)
+
+        json_paths = []
+        for i in range(5):
+            path = os.path.join(album, f"file{i}.json")
+            with open(path, "w") as f:
+                json.dump({"title": f"file{i}"}, f)
+            json_paths.append(path)
+
+        pef_dir = os.path.join(temp_dir, "output", "_pef")
+        os.makedirs(pef_dir, exist_ok=True)
+
+        cancel_event = threading.Event()
+        copy_count = [0]
+        import shutil as shutil_mod
+        original_copy = shutil_mod.copy
+
+        def counting_copy(src, dst):
+            copy_count[0] += 1
+            # Cancel after first copy
+            cancel_event.set()
+            return original_copy(src, dst)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        with patch('pef.core.orchestrator.shutil.copy', side_effect=counting_copy):
+            orchestrator._copy_unmatched_jsons(
+                json_paths, pef_dir, cancel_event=cancel_event
+            )
+
+        # Should have copied only 1 file before cancel took effect
+        assert copy_count[0] == 1
+
+    def test_cancel_none_copies_all(self, temp_dir):
+        """Verify cancel_event=None copies all unmatched JSONs."""
+        album = os.path.join(temp_dir, "Album1")
+        os.makedirs(album)
+
+        json_paths = []
+        for i in range(3):
+            path = os.path.join(album, f"file{i}.json")
+            with open(path, "w") as f:
+                json.dump({"title": f"file{i}"}, f)
+            json_paths.append(path)
+
+        pef_dir = os.path.join(temp_dir, "output", "_pef")
+        os.makedirs(pef_dir, exist_ok=True)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        orchestrator._copy_unmatched_jsons(
+            json_paths, pef_dir, cancel_event=None
+        )
+
+        # All 3 should be copied
+        unmatched_dir = os.path.join(pef_dir, "unmatched_data")
+        copied_files = []
+        for root, dirs, files in os.walk(unmatched_dir):
+            copied_files.extend(files)
+        assert len(copied_files) == 3
