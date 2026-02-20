@@ -6,7 +6,8 @@ Handles copying, date modification, and metadata writing.
 import logging
 import os
 import shutil
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -57,7 +58,8 @@ class FileProcessor:
         batch_size: int = DEFAULT_BATCH_SIZE,
         verbose: bool = False,
         copy_workers: int = DEFAULT_COPY_WORKERS,
-        rename_mp: bool = False
+        rename_mp: bool = False,
+        cancel_event: Optional[threading.Event] = None
     ):
         """Initialize processor.
 
@@ -70,12 +72,14 @@ class FileProcessor:
             verbose: If True, log all operations. If False, only log errors/warnings.
             copy_workers: Number of parallel workers for file copying (default 4).
             rename_mp: If True, rename .MP files to .MP4 for better compatibility.
+            cancel_event: Optional threading.Event for cooperative cancellation.
         """
         self.output_dir = output_dir
         self.logger = logger
         self.write_exif = write_exif
         self.verbose = verbose
         self.rename_mp = rename_mp
+        self.cancel_event = cancel_event
         self.stats = ProcessingStats()
 
         # Track unprocessed files and motion photos
@@ -204,7 +208,7 @@ class FileProcessor:
         if self.logger and self.verbose:
             self.logger.log(f"Flushing batch of {len(batch)} metadata writes...")
 
-        results = self._exiftool.write_tags_batch(batch)
+        results = self._exiftool.write_tags_batch(batch, cancel_event=self.cancel_event)
 
         # Track errors with file paths for debugging
         errors = 0
@@ -353,7 +357,8 @@ class FileProcessor:
                 for task in tasks
             }
 
-            # Collect results as they complete.
+            # Collect results as they complete, using timeouts to allow
+            # cancel checks between blocked futures.
             # Thread safety note: stats mutations (processed, errors) and
             # metadata queue writes happen here in the main thread's
             # as_completed() loop, NOT inside worker threads. Workers only
@@ -361,9 +366,13 @@ class FileProcessor:
             # no locking is needed for shared state — the main thread is
             # the sole writer.
             for future in as_completed(future_to_task):
+                if self.cancel_event and self.cancel_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
+
                 file, metadata, dest_path = future_to_task[future]
                 try:
-                    _, error = future.result()
+                    _, error = future.result(timeout=1.0)
 
                     if error and error.startswith("Error:"):
                         # Copy failed - track as error
@@ -389,6 +398,25 @@ class FileProcessor:
 
                     self.stats.processed += 1
                     results.append((file, dest_path, error))
+
+                except TimeoutError:
+                    # Future not ready yet — check cancel and retry
+                    if self.cancel_event and self.cancel_event.is_set():
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
+                    # Wait for it to complete (it's already running)
+                    try:
+                        _, error = future.result()
+                        file.output_path = dest_path
+                        file.json_path = metadata.filepath
+                        if error and error.startswith("Error:"):
+                            self.stats.errors += 1
+                        else:
+                            self.stats.processed += 1
+                        results.append((file, dest_path, error))
+                    except Exception as e:
+                        self.stats.errors += 1
+                        results.append((file, dest_path, f"Error: {e}"))
 
                 except Exception as e:
                     error_msg = f"Error: {e}"

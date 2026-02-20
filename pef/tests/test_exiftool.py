@@ -2,6 +2,7 @@
 
 import os
 import sys
+import threading
 from unittest.mock import Mock, patch, MagicMock
 
 import pytest
@@ -550,3 +551,98 @@ class TestExifToolManagerBatchOperations:
                 results = manager.read_tags_batch(["/path/file1.jpg", "/path/file2.jpg"])
 
                 assert results == [{}, {}]
+
+
+class TestExifToolManagerCancelAndTimeout:
+    """Tests for cancel and timeout behavior in ExifToolManager."""
+
+    @pytest.fixture
+    def mock_exiftool_module(self):
+        """Create a mock exiftool module."""
+        mock_module = MagicMock()
+        mock_helper = MagicMock()
+        mock_module.ExifToolHelper.return_value = mock_helper
+        return mock_module, mock_helper
+
+    def test_write_tags_batch_cancel_stops_processing(self, mock_exiftool_module):
+        """Verify cancel_event stops batch write and fills remaining as False."""
+        mock_module, mock_helper = mock_exiftool_module
+        cancel_event = threading.Event()
+
+        # Cancel after first file is processed
+        call_count = [0]
+        def set_tags_with_cancel(filepath, tags):
+            call_count[0] += 1
+            if call_count[0] >= 1:
+                cancel_event.set()
+
+        mock_helper.set_tags.side_effect = set_tags_with_cancel
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                manager.start()
+
+                file_tags_pairs = [
+                    ("/path/file1.jpg", {"GPSLatitude": 40.7}),
+                    ("/path/file2.jpg", {"GPSLatitude": 41.0}),
+                    ("/path/file3.jpg", {"GPSLatitude": 42.0}),
+                ]
+                results = manager.write_tags_batch(
+                    file_tags_pairs, cancel_event=cancel_event
+                )
+
+        assert len(results) == 3
+        assert results[0] is True  # First file processed
+        # Remaining files should be False (cancelled)
+        assert False in results[1:]
+
+    def test_write_tags_batch_cancel_already_set(self, mock_exiftool_module):
+        """Verify pre-set cancel_event skips all files."""
+        mock_module, mock_helper = mock_exiftool_module
+        cancel_event = threading.Event()
+        cancel_event.set()  # Pre-set
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+
+                manager = ExifToolManager()
+                manager.start()
+
+                file_tags_pairs = [
+                    ("/path/file1.jpg", {"GPSLatitude": 40.7}),
+                    ("/path/file2.jpg", {"GPSLatitude": 41.0}),
+                ]
+                results = manager.write_tags_batch(
+                    file_tags_pairs, cancel_event=cancel_event
+                )
+
+        assert results == [False, False]
+        mock_helper.set_tags.assert_not_called()
+
+    def test_start_timeout_returns_false(self):
+        """Verify start() returns False when ExifTool hangs during startup."""
+        mock_module = MagicMock()
+        mock_helper = MagicMock()
+
+        # Simulate hanging by sleeping longer than timeout
+        import time
+        def hang_forever():
+            time.sleep(30)
+
+        mock_helper.run.side_effect = hang_forever
+        mock_module.ExifToolHelper.return_value = mock_helper
+
+        with patch.dict('sys.modules', {'exiftool': mock_module}):
+            with patch('pef.core.exiftool.get_exiftool_path') as mock_get_path:
+                mock_get_path.return_value = "/usr/bin/exiftool"
+                with patch('pef.core.exiftool.STARTUP_TIMEOUT', 0.1):
+                    manager = ExifToolManager()
+                    result = manager.start()
+
+        assert result is False
+        assert manager.start_error is not None
+        assert "timed out" in manager.start_error.lower()

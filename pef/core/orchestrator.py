@@ -9,7 +9,7 @@ import os
 import shutil
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -192,7 +192,7 @@ class PEFOrchestrator:
                 return result
 
             chunk_paths = scanner.jsons[chunk_start:chunk_start + chunk_size]
-            chunk_metadata = self._read_jsons_batch(chunk_paths)
+            chunk_metadata = self._read_jsons_batch(chunk_paths, cancel_event=cancel_event)
 
             for json_path in chunk_paths:
                 if cancel_event and cancel_event.is_set():
@@ -357,7 +357,8 @@ class PEFOrchestrator:
                 logger=pef_logger,
                 write_exif=self.write_exif,
                 verbose=self.verbose,
-                rename_mp=self.rename_mp
+                rename_mp=self.rename_mp,
+                cancel_event=cancel_event
             ) as processor:
                 if processor.exiftool_error:
                     result.errors.append(f"ExifTool: {processor.exiftool_error}")
@@ -377,7 +378,8 @@ class PEFOrchestrator:
                     first_batch = jsons_to_process[:batch_size]
                     if first_batch:
                         prefetch_future = pipeline_executor.submit(
-                            self._read_jsons_batch, first_batch
+                            self._read_jsons_batch, first_batch,
+                            self._DEFAULT_JSON_WORKERS, cancel_event
                         )
 
                     for i, json_path in enumerate(jsons_to_process):
@@ -398,9 +400,21 @@ class PEFOrchestrator:
                         # At each batch boundary, collect pre-read results and
                         # kick off pre-read of the next batch
                         if i % batch_size == 0:
-                            # Collect the pre-read batch
+                            # Collect the pre-read batch, using timeout to allow
+                            # cancel checks if the prefetch is slow
                             if prefetch_future is not None:
-                                current_batch_metadata = prefetch_future.result()
+                                while True:
+                                    try:
+                                        current_batch_metadata = prefetch_future.result(timeout=1.0)
+                                        break
+                                    except TimeoutError:
+                                        if cancel_event and cancel_event.is_set():
+                                            current_batch_metadata = {}
+                                            break
+                                        continue
+                                    except Exception:
+                                        current_batch_metadata = {}
+                                        break
                             else:
                                 current_batch_metadata = {}
 
@@ -409,7 +423,8 @@ class PEFOrchestrator:
                             if next_start < total:
                                 next_batch = jsons_to_process[next_start:next_start + batch_size]
                                 prefetch_future = pipeline_executor.submit(
-                                    self._read_jsons_batch, next_batch
+                                    self._read_jsons_batch, next_batch,
+                                    self._DEFAULT_JSON_WORKERS, cancel_event
                                 )
                             else:
                                 prefetch_future = None
@@ -641,7 +656,8 @@ class PEFOrchestrator:
     def _read_jsons_batch(
         self,
         paths: List[str],
-        max_workers: int = _DEFAULT_JSON_WORKERS
+        max_workers: int = _DEFAULT_JSON_WORKERS,
+        cancel_event: Optional[threading.Event] = None
     ) -> Dict[str, Optional[JsonMetadata]]:
         """Read multiple JSON files concurrently using thread pool.
 
@@ -650,6 +666,7 @@ class PEFOrchestrator:
         Args:
             paths: List of JSON file paths to read.
             max_workers: Maximum concurrent threads (default: 8).
+            cancel_event: Optional threading.Event for cooperative cancellation.
 
         Returns:
             Dict mapping path -> JsonMetadata (or None if invalid).
@@ -662,6 +679,8 @@ class PEFOrchestrator:
         # For small batches, sequential is faster due to thread overhead
         if len(paths) < self._PARALLEL_JSON_THRESHOLD:
             for path in paths:
+                if cancel_event and cancel_event.is_set():
+                    break
                 results[path] = self._read_json(path)
             return results
 
@@ -673,9 +692,13 @@ class PEFOrchestrator:
             }
 
             for future in as_completed(future_to_path):
+                if cancel_event and cancel_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
+
                 path = future_to_path[future]
                 try:
-                    results[path] = future.result()
+                    results[path] = future.result(timeout=1.0)
                 except Exception as e:
                     logger.debug(f"Thread error reading {path}: {e}")
                     results[path] = None

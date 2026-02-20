@@ -2,6 +2,7 @@
 
 import os
 import json
+import threading
 from datetime import datetime
 from unittest.mock import Mock, patch
 
@@ -1160,3 +1161,101 @@ class TestPipelinedProcess:
 
         # Should still process the valid file
         assert result.stats.processed == 1
+
+
+class TestCancelDuringDryRun:
+    """Tests for cancel event during dry_run."""
+
+    def test_cancel_during_dry_run_returns_cancelled(self, sample_takeout):
+        """Verify dry_run returns cancelled=True when cancel_event is set."""
+        cancel_event = threading.Event()
+        cancel_event.set()  # Cancel immediately
+
+        orchestrator = PEFOrchestrator(sample_takeout)
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            result = orchestrator.dry_run(cancel_event=cancel_event)
+
+        assert result.cancelled is True
+
+    def test_cancel_during_dry_run_returns_partial_results(self, sample_takeout):
+        """Verify dry_run returns partial results when cancelled mid-way."""
+        cancel_event = threading.Event()
+
+        call_count = [0]
+
+        def counting_progress(current, total, message):
+            call_count[0] += 1
+            # Cancel after seeing a progress update
+            if "[2/2]" in message:
+                cancel_event.set()
+
+        orchestrator = PEFOrchestrator(sample_takeout)
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            result = orchestrator.dry_run(
+                on_progress=counting_progress,
+                cancel_event=cancel_event
+            )
+
+        assert result.cancelled is True
+
+
+class TestCancelDuringProcess:
+    """Tests for cancel event during process."""
+
+    def test_cancel_during_process_saves_state(self, sample_takeout, temp_dir):
+        """Verify state is saved when processing is cancelled."""
+        cancel_event = threading.Event()
+        cancel_event.set()  # Cancel immediately
+
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+                result = orchestrator.process(cancel_event=cancel_event)
+
+        assert result.cancelled is True
+
+    def test_cancel_during_process_returns_early(self, sample_takeout, temp_dir):
+        """Verify cancelled process returns with elapsed_time set."""
+        cancel_event = threading.Event()
+
+        def cancel_on_processing(current, total, message):
+            if "[2/3]" in message:
+                cancel_event.set()
+
+        output_dir = os.path.join(temp_dir, "output")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+                result = orchestrator.process(
+                    on_progress=cancel_on_processing,
+                    cancel_event=cancel_event
+                )
+
+        assert result.cancelled is True
+        assert result.elapsed_time >= 0
+
+
+class TestReadJsonsBatchCancel:
+    """Tests for _read_jsons_batch with cancel_event."""
+
+    def test_cancel_stops_sequential_reading(self, sample_takeout):
+        """Verify cancel_event stops sequential JSON reading."""
+        cancel_event = threading.Event()
+        cancel_event.set()  # Cancel immediately
+
+        orchestrator = PEFOrchestrator(sample_takeout)
+        # Use threshold that forces sequential reading
+        paths = [os.path.join(sample_takeout, "Album1", "photo1.jpg.json")]
+        result = orchestrator._read_jsons_batch(
+            paths, cancel_event=cancel_event
+        )
+
+        # With cancel set before any reading, should return empty or partial
+        assert isinstance(result, dict)

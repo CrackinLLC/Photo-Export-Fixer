@@ -47,14 +47,28 @@ class InlineProgressView(ttk.Frame):
         )
         status_label.pack(fill=tk.X, padx=20, pady=(0, 15))
 
+        # Button container for cancel and force quit
+        self._btn_frame = ttk.Frame(self)
+        self._btn_frame.pack(pady=(0, 10))
+
         # Cancel button
         self._cancel_btn = ttk.Button(
-            self,
+            self._btn_frame,
             text="Cancel",
             command=on_cancel,
             width=15
         )
-        self._cancel_btn.pack(pady=(0, 10))
+        self._cancel_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        # Force quit button (hidden initially, shown after cancel timeout)
+        self._on_force_quit = None
+        self._force_quit_btn = ttk.Button(
+            self._btn_frame,
+            text="Force Quit",
+            command=self._handle_force_quit,
+            width=15
+        )
+        # Not packed yet — shown by show_force_quit()
 
     def set_title(self, title: str):
         """Set the progress title."""
@@ -90,6 +104,22 @@ class InlineProgressView(ttk.Frame):
     def disable_cancel(self):
         """Disable the cancel button (e.g. after cancel is clicked)."""
         self._cancel_btn.config(state="disabled")
+
+    def show_force_quit(self, on_force_quit):
+        """Show the Force Quit button.
+
+        Args:
+            on_force_quit: Callback when Force Quit is clicked.
+        """
+        self._on_force_quit = on_force_quit
+        self._force_quit_btn.pack(side=tk.LEFT, padx=(5, 0))
+
+    def _handle_force_quit(self):
+        """Handle Force Quit button click."""
+        if self._on_force_quit:
+            self._force_quit_btn.config(state="disabled")
+            self._status_var.set("Force quitting...")
+            self._on_force_quit()
 
     def set_status(self, message: str):
         """Set the status message directly."""

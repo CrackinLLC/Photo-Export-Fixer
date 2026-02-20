@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from typing import Optional, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -377,7 +378,37 @@ class ExifToolManager:
                 executable=self._exiftool_path,
                 common_args=["-overwrite_original"]
             )
-            self._helper.run()
+            # Run ExifTool startup in a thread with timeout to avoid
+            # hanging indefinitely if the binary is unresponsive
+            start_error_holder = [None]
+
+            def _run_helper():
+                try:
+                    self._helper.run()
+                except Exception as e:
+                    start_error_holder[0] = e
+
+            t = threading.Thread(target=_run_helper, daemon=True)
+            t.start()
+            t.join(timeout=STARTUP_TIMEOUT)
+
+            if t.is_alive():
+                # Startup hung — try to terminate
+                try:
+                    self._helper.terminate()
+                except Exception:
+                    pass
+                self.start_error = (
+                    f"ExifTool timed out after {STARTUP_TIMEOUT}s during startup — "
+                    "may be corrupted or wrong version"
+                )
+                logger.error(self.start_error)
+                self._helper = None
+                return False
+
+            if start_error_holder[0] is not None:
+                raise start_error_holder[0]
+
             return True
         except Exception as e:
             self.start_error = (
@@ -441,7 +472,8 @@ class ExifToolManager:
 
     def write_tags_batch(
         self,
-        file_tags_pairs: List[Tuple[str, dict]]
+        file_tags_pairs: List[Tuple[str, dict]],
+        cancel_event: Optional[threading.Event] = None
     ) -> List[bool]:
         """Write tags to multiple files efficiently.
 
@@ -458,6 +490,8 @@ class ExifToolManager:
 
         Args:
             file_tags_pairs: List of (filepath, tags_dict) tuples.
+            cancel_event: Optional threading.Event for cooperative cancellation.
+                When set, remaining files are skipped and marked as failed.
 
         Returns:
             List of success booleans, one per file in same order.
@@ -467,6 +501,10 @@ class ExifToolManager:
 
         results = []
         for filepath, tags in file_tags_pairs:
+            if cancel_event and cancel_event.is_set():
+                # Fill remaining results as False (cancelled)
+                results.extend([False] * (len(file_tags_pairs) - len(results)))
+                break
             if not tags:
                 results.append(True)  # No tags to write = success
                 continue
