@@ -9,7 +9,15 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 from pef.core.orchestrator import PEFOrchestrator
-from pef.core.exiftool import is_exiftool_available, get_install_instructions
+from pef.core.exiftool import (
+    is_exiftool_available,
+    get_install_instructions,
+    validate_exiftool,
+    auto_download_exiftool,
+    _reset_exiftool_cache,
+    EXIFTOOL_DIR,
+    EXIFTOOL_EXE,
+)
 from pef.gui.progress import InlineProgressView
 from pef.gui.settings import Settings
 
@@ -156,14 +164,216 @@ class PEFMainWindow:
         self._is_preview_mode = False
         self._progress_view = None
 
-        # Build UI
-        self._create_widgets()
-
-        # Check ExifTool on startup
-        self.root.after(100, self._check_exiftool)
-
         # Save settings on close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Check if ExifTool needs setup before showing main UI
+        self.root.after(50, self._startup_check)
+
+    def _startup_check(self):
+        """Check dependencies on startup and show setup screen if needed.
+
+        Does a lightweight check for ExifTool (system PATH + local tools dir)
+        without triggering auto-download, so the GUI can show a setup screen
+        with progress feedback if a download is needed.
+        """
+        _reset_exiftool_cache()
+
+        # Quick check: is ExifTool already installed?
+        if self._is_exiftool_installed():
+            self._exiftool_available = True
+            self._create_widgets()
+            return
+
+        # ExifTool not found. On Windows, attempt auto-download with setup screen.
+        # On other platforms, just show main UI (user must install manually).
+        if sys.platform != "win32":
+            self._create_widgets()
+            self.root.after(100, self._check_exiftool)
+            return
+
+        # Show setup screen and attempt auto-download
+        self._show_setup_screen()
+
+    def _is_exiftool_installed(self) -> bool:
+        """Check if ExifTool is already installed without triggering download.
+
+        Checks system PATH and local tools directory only.
+        """
+        import shutil
+
+        # Check system PATH
+        system_path = shutil.which("exiftool")
+        if system_path and validate_exiftool(system_path):
+            return True
+
+        # Check local tools folder
+        base_dir = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        local_path = os.path.join(base_dir, EXIFTOOL_DIR, EXIFTOOL_EXE)
+        if os.path.exists(local_path) and validate_exiftool(local_path):
+            return True
+
+        return False
+
+    def _show_setup_screen(self):
+        """Show a setup screen while downloading ExifTool."""
+        self._setup_screen = ttk.Frame(self.root, padding="30")
+        self._setup_screen.pack(fill=tk.BOTH, expand=True)
+
+        # Title
+        title = ttk.Label(
+            self._setup_screen,
+            text="Setting up PEF...",
+            font=("", 18, "bold"),
+        )
+        title.pack(pady=(40, 10))
+
+        # Status message
+        self._setup_status_var = tk.StringVar(value="Checking dependencies...")
+        status_label = ttk.Label(
+            self._setup_screen,
+            textvariable=self._setup_status_var,
+            font=("", 11),
+        )
+        status_label.pack(pady=(10, 15))
+
+        # Indeterminate progress bar
+        self._setup_progress = ttk.Progressbar(
+            self._setup_screen,
+            mode="indeterminate",
+            length=350,
+        )
+        self._setup_progress.pack(pady=(0, 20))
+        self._setup_progress.start(15)
+
+        # Detail message (smaller, for additional context)
+        self._setup_detail_var = tk.StringVar(value="")
+        self._setup_detail = ttk.Label(
+            self._setup_screen,
+            textvariable=self._setup_detail_var,
+            font=("", 9),
+            foreground="gray",
+        )
+        self._setup_detail.pack(pady=(0, 10))
+
+        # Start download in background
+        self.root.after(100, self._run_setup_download)
+
+    def _run_setup_download(self):
+        """Run ExifTool download in a background thread."""
+        def download():
+            base_dir = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+            self.root.after(0, lambda: self._update_setup_status(
+                "Downloading ExifTool...",
+                "This is a one-time setup and may take a moment"
+            ))
+            success = auto_download_exiftool(base_dir)
+            if success:
+                self.root.after(0, lambda: self._update_setup_status(
+                    "Verifying installation...", ""
+                ))
+                _reset_exiftool_cache()
+                available = is_exiftool_available()
+                self.root.after(0, lambda: self._on_setup_complete(available))
+            else:
+                self.root.after(0, lambda: self._on_setup_failed())
+
+        thread = threading.Thread(target=download, daemon=True)
+        thread.start()
+
+    def _update_setup_status(self, message: str, detail: str):
+        """Update setup screen status message."""
+        if not self.root.winfo_exists():
+            return
+        self._setup_status_var.set(message)
+        self._setup_detail_var.set(detail)
+
+    def _on_setup_complete(self, exiftool_available: bool):
+        """Handle setup completion — transition to main UI."""
+        if not self.root.winfo_exists():
+            return
+        self._setup_progress.stop()
+        self._exiftool_available = exiftool_available
+
+        # Remove setup screen and show main UI
+        self._setup_screen.destroy()
+        self._create_widgets()
+
+    def _on_setup_failed(self):
+        """Handle setup failure — show error screen with instructions."""
+        if not self.root.winfo_exists():
+            return
+        self._setup_progress.stop()
+
+        # Update setup screen to show error
+        self._setup_status_var.set("Setup failed")
+        self._setup_detail_var.set("")
+
+        # Remove progress bar
+        self._setup_progress.destroy()
+
+        # Add error details
+        error_label = ttk.Label(
+            self._setup_screen,
+            text=(
+                "Could not download ExifTool automatically.\n"
+                "This may be due to a network issue."
+            ),
+            font=("", 10),
+            foreground="red",
+            justify=tk.CENTER,
+        )
+        error_label.pack(pady=(0, 15))
+
+        info_label = ttk.Label(
+            self._setup_screen,
+            text=(
+                "You can continue without ExifTool — PEF will still\n"
+                "fix file dates, but won't write GPS or people tags."
+            ),
+            font=("", 10),
+            justify=tk.CENTER,
+        )
+        info_label.pack(pady=(0, 20))
+
+        # Buttons
+        btn_frame = ttk.Frame(self._setup_screen)
+        btn_frame.pack(pady=(0, 10))
+
+        retry_btn = ttk.Button(
+            btn_frame,
+            text="Retry",
+            command=self._retry_setup,
+            width=12,
+        )
+        retry_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        continue_btn = ttk.Button(
+            btn_frame,
+            text="Continue Anyway",
+            command=self._skip_setup,
+            width=15,
+        )
+        continue_btn.pack(side=tk.LEFT)
+
+    def _retry_setup(self):
+        """Retry ExifTool setup from scratch."""
+        if not self.root.winfo_exists():
+            return
+        self._setup_screen.destroy()
+        self._show_setup_screen()
+
+    def _skip_setup(self):
+        """Skip ExifTool setup and show main UI."""
+        if not self.root.winfo_exists():
+            return
+        self._setup_screen.destroy()
+        self._create_widgets()
+        self.root.after(100, self._check_exiftool)
 
     def _create_widgets(self):
         """Create and layout all widgets."""
@@ -385,7 +595,6 @@ class PEFMainWindow:
         self.exif_install_btn.config(state="disabled")
 
         def download():
-            from pef.core.exiftool import auto_download_exiftool
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             return auto_download_exiftool(base_dir)
 
@@ -393,7 +602,6 @@ class PEFMainWindow:
             if not self.root.winfo_exists():
                 return
             if success:
-                from pef.core.exiftool import _reset_exiftool_cache
                 _reset_exiftool_cache()
                 self._check_exiftool()
                 if self._exiftool_available:
