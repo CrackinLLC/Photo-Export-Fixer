@@ -1259,3 +1259,152 @@ class TestReadJsonsBatchCancel:
 
         # With cancel set before any reading, should return empty or partial
         assert isinstance(result, dict)
+
+
+class TestPEFOrchestratorCache:
+    """Tests for dry_run -> process cache reuse."""
+
+    def test_dry_run_populates_cache(self, sample_takeout):
+        """Verify dry_run caches scanner and metadata."""
+        orchestrator = PEFOrchestrator(sample_takeout)
+
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            orchestrator.dry_run()
+
+        assert orchestrator._cached_scanner is not None
+        assert orchestrator._cached_metadata is not None
+        assert len(orchestrator._cached_metadata) > 0
+
+    def test_process_uses_cached_scanner(self, sample_takeout, temp_dir):
+        """Verify process skips scan when cache is available from dry_run."""
+        output_dir = os.path.join(temp_dir, "output")
+        orchestrator = PEFOrchestrator(
+            sample_takeout, dest_path=output_dir, write_exif=False
+        )
+
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            orchestrator.dry_run()
+
+        # Scanner should be cached
+        assert orchestrator._cached_scanner is not None
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                # Patch FileScanner to verify it's NOT called again
+                with patch('pef.core.orchestrator.FileScanner') as mock_scanner_cls:
+                    result = orchestrator.process()
+
+        # FileScanner constructor should NOT have been called (used cache)
+        mock_scanner_cls.assert_not_called()
+        # Processing should still produce correct results
+        assert result.stats.processed == 4
+
+    def test_process_without_preview_works(self, sample_takeout, temp_dir):
+        """Verify process works correctly without prior dry_run (no cache)."""
+        output_dir = os.path.join(temp_dir, "output")
+        orchestrator = PEFOrchestrator(
+            sample_takeout, dest_path=output_dir, write_exif=False
+        )
+
+        assert orchestrator._cached_scanner is None
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                result = orchestrator.process()
+
+        assert result.stats.processed == 4
+
+    def test_cache_cleared_after_process(self, sample_takeout, temp_dir):
+        """Verify cache is cleared after process completes."""
+        output_dir = os.path.join(temp_dir, "output")
+        orchestrator = PEFOrchestrator(
+            sample_takeout, dest_path=output_dir, write_exif=False
+        )
+
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            orchestrator.dry_run()
+
+        assert orchestrator._cached_scanner is not None
+
+        with patch('pef.core.processor.filedate'):
+            with patch('pef.core.processor.ExifToolManager'):
+                orchestrator.process()
+
+        assert orchestrator._cached_scanner is None
+        assert orchestrator._cached_metadata is None
+
+    def test_dry_run_then_process_matches_standalone_process(self, sample_takeout):
+        """Verify dry_run -> process produces same results as standalone process."""
+        import tempfile
+        import shutil
+
+        # Use separate temp dirs for output to avoid source contamination
+        output_cached = tempfile.mkdtemp()
+        output_fresh = tempfile.mkdtemp()
+        try:
+            # Run with cache (dry_run -> process)
+            orch_cached = PEFOrchestrator(
+                sample_takeout, dest_path=output_cached, write_exif=False
+            )
+            with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+                orch_cached.dry_run()
+            with patch('pef.core.processor.filedate'):
+                with patch('pef.core.processor.ExifToolManager'):
+                    result_cached = orch_cached.process()
+
+            # Run without cache (process only)
+            orch_fresh = PEFOrchestrator(
+                sample_takeout, dest_path=output_fresh, write_exif=False
+            )
+            with patch('pef.core.processor.filedate'):
+                with patch('pef.core.processor.ExifToolManager'):
+                    result_fresh = orch_fresh.process()
+
+            # Results should match
+            assert result_cached.stats.processed == result_fresh.stats.processed
+            assert result_cached.stats.with_gps == result_fresh.stats.with_gps
+            assert result_cached.stats.with_people == result_fresh.stats.with_people
+        finally:
+            shutil.rmtree(output_cached, ignore_errors=True)
+            shutil.rmtree(output_fresh, ignore_errors=True)
+
+    def test_cancelled_dry_run_does_not_cache(self, sample_takeout):
+        """Verify cancelled dry_run does not populate cache."""
+        import threading
+
+        orchestrator = PEFOrchestrator(sample_takeout)
+        cancel = threading.Event()
+        cancel.set()  # Cancel immediately
+
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            result = orchestrator.dry_run(cancel_event=cancel)
+
+        assert result.cancelled is True
+        assert orchestrator._cached_scanner is None
+        assert orchestrator._cached_metadata is None
+
+    def test_second_dry_run_clears_previous_cache(self, sample_takeout):
+        """Verify running dry_run again clears previous cache before starting."""
+        orchestrator = PEFOrchestrator(sample_takeout)
+
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            orchestrator.dry_run()
+
+        first_scanner = orchestrator._cached_scanner
+
+        with patch('pef.core.orchestrator.is_exiftool_available', return_value=False):
+            orchestrator.dry_run()
+
+        # Should have a new scanner instance (not the same object)
+        assert orchestrator._cached_scanner is not first_scanner
+
+    def test_dry_run_error_does_not_cache(self, temp_dir):
+        """Verify dry_run with source error does not populate cache."""
+        missing_path = os.path.join(temp_dir, "nonexistent")
+        orchestrator = PEFOrchestrator(missing_path)
+
+        result = orchestrator.dry_run()
+
+        assert len(result.errors) > 0
+        assert orchestrator._cached_scanner is None
+        assert orchestrator._cached_metadata is None
