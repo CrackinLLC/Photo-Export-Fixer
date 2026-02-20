@@ -438,6 +438,14 @@ class PEFMainWindow:
     def _browse_dest(self):
         """Open file dialog for destination directory."""
         initial = self.dest_path.get() or self.source_path.get() or os.path.expanduser("~")
+        # Walk up to find an existing ancestor directory for the dialog
+        while initial and not os.path.isdir(initial):
+            parent = os.path.dirname(initial)
+            if parent == initial:
+                # Reached filesystem root without finding existing dir
+                initial = os.path.expanduser("~")
+                break
+            initial = parent
         path = filedialog.askdirectory(
             title="Select Destination Directory",
             initialdir=initial
