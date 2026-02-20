@@ -690,17 +690,20 @@ class PEFMainWindow:
         )
 
     def _get_or_create_orchestrator(self):
-        """Reuse cached orchestrator from preview if paths match, else create new."""
+        """Reuse cached orchestrator from preview if paths and settings match, else create new."""
         source = self.source_path.get().strip()
         dest = self.dest_path.get().strip() or None
         if (
             self._orchestrator is not None
             and self._orchestrator.source_path == source
             and self._orchestrator.dest_path == (dest or f"{source}_processed")
+            and self._orchestrator.write_exif == self.write_exif.get()
+            and self._orchestrator.verbose == self.verbose_logging.get()
+            and self._orchestrator.rename_mp == self.rename_mp.get()
         ):
             return self._orchestrator
 
-        # Paths changed or no cached orchestrator - create fresh
+        # Settings changed or no cached orchestrator - create fresh
         self._orchestrator = None
         return self._create_orchestrator()
 
