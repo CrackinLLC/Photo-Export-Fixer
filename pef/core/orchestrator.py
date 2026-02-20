@@ -11,7 +11,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, Iterator, List, Optional, Tuple
 
 # Use orjson for faster JSON parsing (3-10x faster than stdlib json)
 try:
@@ -178,10 +178,10 @@ class PEFOrchestrator:
                 "No JSON metadata files found. This may not be a valid Google Takeout directory."
             )
 
-        # Phase 2: Read and analyze in chunks to bound peak memory.
-        # Instead of loading all JSON metadata at once (~250MB at 200K files),
-        # we read a chunk, match, count, then discard before the next chunk.
-        # However, we accumulate metadata for caching so process() can reuse it.
+        # Phase 2: Read and analyze in chunks to bound peak memory per-chunk.
+        # Metadata is accumulated across chunks for caching (~170MB at 200K files).
+        # This trades higher peak memory for skipping redundant disk I/O when
+        # process() is called after dry_run() (the common GUI Preview → Start flow).
         matcher = FileMatcher(scanner.file_index, self.suffixes, scanner.lowercase_index)
 
         total_jsons = len(scanner.jsons)
@@ -418,39 +418,39 @@ class PEFOrchestrator:
                         processor.flush_metadata_writes()
 
                     if not metadata:
-                            unmatched_jsons.append(json_path)
-                            self._active_state.mark_processed(json_path)
-                            continue
-
-                        match = matcher.find_all_related_files(json_path, metadata.title)
-                        if match.found:
-                            any_success = False
-                            for file_info in match.files:
-                                try:
-                                    dest = processor.process_file(file_info, metadata)
-                                    matched_file_paths.add(file_info.filepath)
-                                    processed_files.append({
-                                        "filename": file_info.filename,
-                                        "filepath": file_info.filepath,
-                                        "output_path": dest,
-                                        "json_path": json_path
-                                    })
-                                    any_success = True
-                                except Exception as e:
-                                    result.errors.append(f"Error processing {file_info.filepath}: {e}")
-                            if any_success:
-                                if metadata.has_location():
-                                    processor.stats.with_gps += 1
-                                if metadata.has_people():
-                                    processor.stats.with_people += 1
-                        else:
-                            logger.debug(
-                                "No matching media file for Takeout JSON (title=%s): %s",
-                                metadata.title, json_path
-                            )
-                            unmatched_jsons.append(json_path)
-
+                        unmatched_jsons.append(json_path)
                         self._active_state.mark_processed(json_path)
+                        continue
+
+                    match = matcher.find_all_related_files(json_path, metadata.title)
+                    if match.found:
+                        any_success = False
+                        for file_info in match.files:
+                            try:
+                                dest = processor.process_file(file_info, metadata)
+                                matched_file_paths.add(file_info.filepath)
+                                processed_files.append({
+                                    "filename": file_info.filename,
+                                    "filepath": file_info.filepath,
+                                    "output_path": dest,
+                                    "json_path": json_path
+                                })
+                                any_success = True
+                            except Exception as e:
+                                result.errors.append(f"Error processing {file_info.filepath}: {e}")
+                        if any_success:
+                            if metadata.has_location():
+                                processor.stats.with_gps += 1
+                            if metadata.has_people():
+                                processor.stats.with_people += 1
+                    else:
+                        logger.debug(
+                            "No matching media file for Takeout JSON (title=%s): %s",
+                            metadata.title, json_path
+                        )
+                        unmatched_jsons.append(json_path)
+
+                    self._active_state.mark_processed(json_path)
 
                 # Phase 3: Handle unmatched files (copy all, track as unprocessed)
                 unmatched_files = [
