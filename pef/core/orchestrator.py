@@ -11,7 +11,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, Iterator, List, Optional, Tuple
 
 # Use orjson for faster JSON parsing (3-10x faster than stdlib json)
 try:
@@ -113,6 +113,10 @@ class PEFOrchestrator:
         self.rename_mp = rename_mp
         self._active_state: Optional[StateManager] = None
 
+        # Cache from dry_run for reuse in process()
+        self._cached_scanner: Optional[FileScanner] = None
+        self._cached_metadata: Optional[Dict[str, Optional['JsonMetadata']]] = None
+
     def save_progress(self) -> bool:
         """Save current processing progress for later resume.
 
@@ -143,6 +147,9 @@ class PEFOrchestrator:
         """
         result = DryRunResult()
 
+        # Clear any previous cache before starting a new dry run
+        self._clear_cache()
+
         # Validate source
         if not exists(self.source_path):
             result.errors.append(f"Source path does not exist: {self.source_path}")
@@ -171,15 +178,17 @@ class PEFOrchestrator:
                 "No JSON metadata files found. This may not be a valid Google Takeout directory."
             )
 
-        # Phase 2: Read and analyze in chunks to bound peak memory.
-        # Instead of loading all JSON metadata at once (~250MB at 200K files),
-        # we read a chunk, match, count, then discard before the next chunk.
+        # Phase 2: Read and analyze in chunks to bound peak memory per-chunk.
+        # Metadata is accumulated across chunks for caching (~170MB at 200K files).
+        # This trades higher peak memory for skipping redundant disk I/O when
+        # process() is called after dry_run() (the common GUI Preview → Start flow).
         matcher = FileMatcher(scanner.file_index, self.suffixes, scanner.lowercase_index)
 
         total_jsons = len(scanner.jsons)
         interval = _adaptive_interval(total_jsons)
         chunk_size = self._DRY_RUN_CHUNK_SIZE
         processed = 0
+        all_metadata: Dict[str, Optional[JsonMetadata]] = {}
 
         if on_progress:
             on_progress(0, total_jsons, "[2/2] Analyzing metadata...")
@@ -193,6 +202,7 @@ class PEFOrchestrator:
 
             chunk_paths = scanner.jsons[chunk_start:chunk_start + chunk_size]
             chunk_metadata = self._read_jsons_batch(chunk_paths, cancel_event=cancel_event)
+            all_metadata.update(chunk_metadata)
 
             for json_path in chunk_paths:
                 if cancel_event and cancel_event.is_set():
@@ -230,6 +240,10 @@ class PEFOrchestrator:
 
         if on_progress:
             on_progress(total_jsons, total_jsons, "Analysis complete")
+
+        # Cache scanner and metadata for reuse in process()
+        self._cached_scanner = scanner
+        self._cached_metadata = all_metadata
 
         return result
 
@@ -312,16 +326,26 @@ class PEFOrchestrator:
             end_time=""
         )
 
-        # Phase 1: Scan
-        if on_progress:
-            on_progress(0, 0, "[1/3] Scanning files...")
-
-        def scan_progress(current, total, message):
+        # Phase 1: Scan (skip if cached from dry_run)
+        use_cache = self._cached_scanner is not None
+        if use_cache:
+            scanner = self._cached_scanner
+            cached_metadata = self._cached_metadata
             if on_progress:
-                on_progress(current, 0, f"[1/3] {message}")
+                on_progress(0, 0, "[1/3] Using cached scan results...")
+            logger.info("Using cached scanner from preview (%d files, %d JSONs)",
+                        scanner.file_count, scanner.json_count)
+        else:
+            cached_metadata = None
+            if on_progress:
+                on_progress(0, 0, "[1/3] Scanning files...")
 
-        scanner = FileScanner(self.source_path)
-        scanner.scan(on_progress=scan_progress if on_progress else None)
+            def scan_progress(current, total, message):
+                if on_progress:
+                    on_progress(current, 0, f"[1/3] {message}")
+
+            scanner = FileScanner(self.source_path)
+            scanner.scan(on_progress=scan_progress if on_progress else None)
 
         # Initialize or update state manager (stored in _pef for resume)
         self._active_state = StateManager(pef_dir)
@@ -366,109 +390,67 @@ class PEFOrchestrator:
 
                 total = len(jsons_to_process)
                 interval = _adaptive_interval(total)
-                batch_size = self._PIPELINE_BATCH_SIZE
 
-                # Pipeline: pre-read the next batch while processing current batch.
-                # This overlaps I/O with processing for better throughput.
-                # Context manager ensures executor cleanup on exceptions.
-                with ThreadPoolExecutor(max_workers=1) as pipeline_executor:
-                    prefetch_future = None
+                # Choose metadata source: cached dict or pipelined disk reads
+                if cached_metadata is not None:
+                    logger.info("Using cached metadata from preview")
+                    metadata_iter = self._iter_cached_metadata(
+                        jsons_to_process, cached_metadata
+                    )
+                else:
+                    metadata_iter = self._iter_pipelined_metadata(
+                        jsons_to_process, cancel_event
+                    )
 
-                    # Kick off pre-read of first batch
-                    first_batch = jsons_to_process[:batch_size]
-                    if first_batch:
-                        prefetch_future = pipeline_executor.submit(
-                            self._read_jsons_batch, first_batch,
-                            self._DEFAULT_JSON_WORKERS, cancel_event
-                        )
+                # Unified processing loop — metadata source is abstracted
+                for i, json_path, metadata in metadata_iter:
+                    if cancel_event and cancel_event.is_set():
+                        self._active_state.save()
+                        result.cancelled = True
+                        if on_progress:
+                            on_progress(i, total, "Cancelled — saving progress")
+                        break
 
-                    for i, json_path in enumerate(jsons_to_process):
-                        if cancel_event and cancel_event.is_set():
-                            self._active_state.save()
-                            result.cancelled = True
-                            if on_progress:
-                                on_progress(i, total, "Cancelled — saving progress")
-                            break
+                    if on_progress and i % interval == 0:
+                        on_progress(i, total, f"[2/3] Processing: {os.path.basename(json_path)}")
 
-                        if on_progress and i % interval == 0:
-                            on_progress(i, total, f"[2/3] Processing: {os.path.basename(json_path)}")
+                    if i > 0 and i % 500 == 0:
+                        processor.flush_metadata_writes()
 
-                        # Periodic flush of batched metadata writes for progress visibility
-                        if i > 0 and i % 500 == 0:
-                            processor.flush_metadata_writes()
-
-                        # At each batch boundary, collect pre-read results and
-                        # kick off pre-read of the next batch
-                        if i % batch_size == 0:
-                            # Collect the pre-read batch, using timeout to allow
-                            # cancel checks if the prefetch is slow
-                            if prefetch_future is not None:
-                                while True:
-                                    try:
-                                        current_batch_metadata = prefetch_future.result(timeout=1.0)
-                                        break
-                                    except TimeoutError:
-                                        if cancel_event and cancel_event.is_set():
-                                            current_batch_metadata = {}
-                                            break
-                                        continue
-                                    except Exception:
-                                        current_batch_metadata = {}
-                                        break
-                            else:
-                                current_batch_metadata = {}
-
-                            # Start pre-reading the next batch
-                            next_start = i + batch_size
-                            if next_start < total:
-                                next_batch = jsons_to_process[next_start:next_start + batch_size]
-                                prefetch_future = pipeline_executor.submit(
-                                    self._read_jsons_batch, next_batch,
-                                    self._DEFAULT_JSON_WORKERS, cancel_event
-                                )
-                            else:
-                                prefetch_future = None
-
-                        metadata = current_batch_metadata.get(json_path)
-                        if not metadata:
-                            # Invalid JSON - still save it to unmatched_data
-                            unmatched_jsons.append(json_path)
-                            self._active_state.mark_processed(json_path)
-                            continue
-
-                        # Use find_all_related_files to get original AND all edited variants
-                        match = matcher.find_all_related_files(json_path, metadata.title)
-                        if match.found:
-                            any_success = False
-                            for file_info in match.files:
-                                try:
-                                    dest = processor.process_file(file_info, metadata)
-                                    matched_file_paths.add(file_info.filepath)
-                                    processed_files.append({
-                                        "filename": file_info.filename,
-                                        "filepath": file_info.filepath,
-                                        "output_path": dest,
-                                        "json_path": json_path
-                                    })
-                                    any_success = True
-                                except Exception as e:
-                                    result.errors.append(f"Error processing {file_info.filepath}: {e}")
-                            # Count GPS/people per JSON, not per file
-                            if any_success:
-                                if metadata.has_location():
-                                    processor.stats.with_gps += 1
-                                if metadata.has_people():
-                                    processor.stats.with_people += 1
-                        else:
-                            # Valid Takeout JSON but no matching media file found
-                            logger.debug(
-                                "No matching media file for Takeout JSON (title=%s): %s",
-                                metadata.title, json_path
-                            )
-                            unmatched_jsons.append(json_path)
-
-                        # Mark this JSON as processed for resume capability
+                    if not metadata:
+                        unmatched_jsons.append(json_path)
                         self._active_state.mark_processed(json_path)
+                        continue
+
+                    match = matcher.find_all_related_files(json_path, metadata.title)
+                    if match.found:
+                        any_success = False
+                        for file_info in match.files:
+                            try:
+                                dest = processor.process_file(file_info, metadata)
+                                matched_file_paths.add(file_info.filepath)
+                                processed_files.append({
+                                    "filename": file_info.filename,
+                                    "filepath": file_info.filepath,
+                                    "output_path": dest,
+                                    "json_path": json_path
+                                })
+                                any_success = True
+                            except Exception as e:
+                                result.errors.append(f"Error processing {file_info.filepath}: {e}")
+                        if any_success:
+                            if metadata.has_location():
+                                processor.stats.with_gps += 1
+                            if metadata.has_people():
+                                processor.stats.with_people += 1
+                    else:
+                        logger.debug(
+                            "No matching media file for Takeout JSON (title=%s): %s",
+                            metadata.title, json_path
+                        )
+                        unmatched_jsons.append(json_path)
+
+                    self._active_state.mark_processed(json_path)
 
                 # Phase 3: Handle unmatched files (copy all, track as unprocessed)
                 unmatched_files = [
@@ -512,6 +494,7 @@ class PEFOrchestrator:
                 result.elapsed_time = round(end_time - start_time, 3)
                 result.end_time = time.strftime("%Y-%m-%d %H:%M:%S")
                 self._active_state = None
+                self._clear_cache()
                 return result
 
             # Phase 4: Copy unmatched JSONs to _pef/unmatched_data/
@@ -545,10 +528,87 @@ class PEFOrchestrator:
         self._active_state.complete()
         self._active_state = None
 
+        # Clear cache after processing completes (no stale data for next run)
+        self._clear_cache()
+
         if on_progress:
             on_progress(total, total, "Processing complete")
 
         return result
+
+    def _clear_cache(self) -> None:
+        """Clear cached scanner and metadata from dry_run."""
+        self._cached_scanner = None
+        self._cached_metadata = None
+
+    def _iter_cached_metadata(
+        self,
+        json_paths: List[str],
+        cached: Dict[str, Optional[JsonMetadata]]
+    ) -> Iterator[Tuple[int, str, Optional[JsonMetadata]]]:
+        """Yield (index, json_path, metadata) from cached dict."""
+        for i, json_path in enumerate(json_paths):
+            yield i, json_path, cached.get(json_path)
+
+    def _iter_pipelined_metadata(
+        self,
+        json_paths: List[str],
+        cancel_event: Optional[threading.Event] = None
+    ) -> Iterator[Tuple[int, str, Optional[JsonMetadata]]]:
+        """Yield (index, json_path, metadata) using pipelined disk reads.
+
+        Pre-reads the next batch while the caller processes the current one,
+        overlapping I/O with processing for better throughput.
+        """
+        batch_size = self._PIPELINE_BATCH_SIZE
+
+        with ThreadPoolExecutor(max_workers=1) as pipeline_executor:
+            prefetch_future = None
+
+            # Kick off pre-read of first batch
+            first_batch = json_paths[:batch_size]
+            if first_batch:
+                prefetch_future = pipeline_executor.submit(
+                    self._read_jsons_batch, first_batch,
+                    self._DEFAULT_JSON_WORKERS, cancel_event
+                )
+
+            current_batch_metadata: Dict[str, Optional[JsonMetadata]] = {}
+
+            for i, json_path in enumerate(json_paths):
+                # At each batch boundary, collect pre-read results and
+                # kick off pre-read of the next batch
+                if i % batch_size == 0:
+                    # Collect the pre-read batch, using timeout to allow
+                    # cancel checks if the prefetch is slow
+                    if prefetch_future is not None:
+                        while True:
+                            try:
+                                current_batch_metadata = prefetch_future.result(timeout=1.0)
+                                break
+                            except TimeoutError:
+                                if cancel_event and cancel_event.is_set():
+                                    current_batch_metadata = {}
+                                    break
+                                continue
+                            except Exception:
+                                current_batch_metadata = {}
+                                break
+                    else:
+                        current_batch_metadata = {}
+
+                    # Start pre-reading the next batch
+                    next_start = i + batch_size
+                    if next_start < len(json_paths):
+                        next_batch = json_paths[next_start:next_start + batch_size]
+                        prefetch_future = pipeline_executor.submit(
+                            self._read_jsons_batch, next_batch,
+                            self._DEFAULT_JSON_WORKERS, cancel_event
+                        )
+                    else:
+                        prefetch_future = None
+
+                yield i, json_path, current_batch_metadata.get(json_path)
 
     def _copy_unmatched_jsons(
         self,

@@ -165,6 +165,8 @@ class PEFMainWindow:
         self._progress_view = None
         self._force_quit_timer = None
         self._processing_thread = None
+
+        # Cached orchestrator from preview for reuse in Start
         self._orchestrator = None
 
         # Save settings on close
@@ -687,6 +689,21 @@ class PEFMainWindow:
             rename_mp=self.rename_mp.get()
         )
 
+    def _get_or_create_orchestrator(self):
+        """Reuse cached orchestrator from preview if paths match, else create new."""
+        source = self.source_path.get().strip()
+        dest = self.dest_path.get().strip() or None
+        if (
+            self._orchestrator is not None
+            and self._orchestrator.source_path == source
+            and self._orchestrator.dest_path == (dest or f"{source}_processed")
+        ):
+            return self._orchestrator
+
+        # Paths changed or no cached orchestrator - create fresh
+        self._orchestrator = None
+        return self._create_orchestrator()
+
     def _show_progress_view(self, title: str):
         """Swap from setup view to inline progress view."""
         self._setup_container.pack_forget()
@@ -779,14 +796,21 @@ class PEFMainWindow:
             self.root.after_cancel(self._force_quit_timer)
             self._force_quit_timer = None
 
-    def _run_async(self, status_msg: str, title: str, operation, on_complete):
-        """Run an operation asynchronously with inline progress view."""
+    def _run_async(self, status_msg: str, title: str, orchestrator, operation, on_complete):
+        """Run an operation asynchronously with inline progress view.
+
+        Args:
+            status_msg: Status bar message to show.
+            title: Title for the progress view.
+            orchestrator: PEFOrchestrator instance to use.
+            operation: Callable(orchestrator, progress_cb) -> result.
+            on_complete: Callable(result) called on main thread when done.
+        """
         self.status_var.set(status_msg)
         self._show_progress_view(title)
 
         def run():
             try:
-                orchestrator = self._create_orchestrator()
                 self._orchestrator = orchestrator
                 last_update = [0.0]
 
@@ -820,7 +844,6 @@ class PEFMainWindow:
         self._cancel_force_quit_timer()
         self._cancel_event = None
         self._is_preview_mode = False
-        self._orchestrator = None
         self._processing_thread = None
         self._show_setup_view()
         on_complete(result)
@@ -846,9 +869,12 @@ class PEFMainWindow:
         self._cancel_event = threading.Event()
         self._is_preview_mode = True
         cancel_event = self._cancel_event
+        orchestrator = self._create_orchestrator()
+        self._orchestrator = orchestrator
         self._run_async(
             "Analyzing...",
             "Analyzing Files",
+            orchestrator,
             lambda orch, cb: orch.dry_run(on_progress=cb, cancel_event=cancel_event),
             self._show_dry_run_results
         )
@@ -922,17 +948,27 @@ ExifTool: {exif_status}"""
         self._cancel_event = threading.Event()
         self._is_preview_mode = False
         cancel_event = self._cancel_event
+
+        # Reuse orchestrator from preview if paths match
+        orchestrator = self._get_or_create_orchestrator()
+
         self._run_async(
             "Processing...",
             "Processing Files",
+            orchestrator,
             lambda orch, cb: orch.process(on_progress=cb, force=force, cancel_event=cancel_event),
-            self._show_process_results
+            self._on_process_complete
         )
 
     def _show_exiftool_instructions(self):
         """Show ExifTool installation instructions."""
         instructions = get_install_instructions()
         messagebox.showinfo("ExifTool Installation", instructions)
+
+    def _on_process_complete(self, result):
+        """Handle process completion - clear cached orchestrator and show results."""
+        self._orchestrator = None
+        self._show_process_results(result)
 
     def _show_process_results(self, result):
         """Show processing results."""
