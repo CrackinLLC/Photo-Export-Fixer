@@ -332,7 +332,10 @@ class PEFOrchestrator:
             scanner = self._cached_scanner
             cached_metadata = self._cached_metadata
             if on_progress:
-                on_progress(0, 0, "[1/3] Using cached scan results...")
+                on_progress(
+                    0, 0,
+                    f"[1/3] Scan cached from preview ({scanner.file_count:,} files, {scanner.json_count:,} JSONs)"
+                )
             logger.info("Using cached scanner from preview (%d files, %d JSONs)",
                         scanner.file_count, scanner.json_count)
         else:
@@ -362,8 +365,17 @@ class PEFOrchestrator:
         result.resumed = resuming
         result.skipped_count = skipped_count
 
+        # Calculate progress offset for resume continuity
+        # When resuming, report progress against the original total so the
+        # progress bar starts at the previously reached position.
+        original_total = len(scanner.jsons)
+        progress_offset = skipped_count
+
         if skipped_count > 0 and on_progress:
-            on_progress(0, 100, f"Resuming: skipping {skipped_count} already processed")
+            on_progress(
+                progress_offset, original_total,
+                f"[PREV] Resuming: {skipped_count:,} of {original_total:,} already processed"
+            )
 
         # Phase 2: Process matched files
         processed_files = []
@@ -388,8 +400,8 @@ class PEFOrchestrator:
                     result.errors.append(f"ExifTool: {processor.exiftool_error}")
                 matcher = FileMatcher(scanner.file_index, self.suffixes, scanner.lowercase_index)
 
-                total = len(jsons_to_process)
-                interval = _adaptive_interval(total)
+                remaining = len(jsons_to_process)
+                interval = _adaptive_interval(remaining)
 
                 # Choose metadata source: cached dict or pipelined disk reads
                 if cached_metadata is not None:
@@ -408,11 +420,17 @@ class PEFOrchestrator:
                         self._active_state.save()
                         result.cancelled = True
                         if on_progress:
-                            on_progress(i, total, "Cancelled — saving progress")
+                            on_progress(
+                                progress_offset + i, original_total,
+                                "Cancelled \u2014 saving progress"
+                            )
                         break
 
                     if on_progress and i % interval == 0:
-                        on_progress(i, total, f"[2/3] Matching file {i + 1:,} of {total:,}: {os.path.basename(json_path)}")
+                        on_progress(
+                            progress_offset + i, original_total,
+                            f"[2/3] Matching file {progress_offset + i + 1:,} of {original_total:,}: {os.path.basename(json_path)}"
+                        )
 
                     if i > 0 and i % 500 == 0:
                         processor.flush_metadata_writes()
@@ -532,7 +550,7 @@ class PEFOrchestrator:
         self._clear_cache()
 
         if on_progress:
-            on_progress(total, total, "Processing complete")
+            on_progress(original_total, original_total, "Processing complete")
 
         return result
 

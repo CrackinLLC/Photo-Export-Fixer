@@ -957,6 +957,75 @@ class TestPEFOrchestratorResumeFields:
         assert result.resumed is False
         assert result.skipped_count == 0
 
+    def test_resume_progress_reports_original_total(self, sample_takeout, temp_dir):
+        """Verify resume reports progress against original total, not just remaining."""
+        # Use a separate output dir outside source to avoid scanner picking up state JSON
+        output_dir = os.path.join(os.path.dirname(sample_takeout), "resume_output")
+        os.makedirs(os.path.join(output_dir, "_pef"), exist_ok=True)
+
+        # Create in-progress state with 1 of 3 already processed
+        state_data = {
+            "version": 1,
+            "source_path": sample_takeout,
+            "started_at": "2024-01-01T00:00:00",
+            "last_updated": "2024-01-01T00:00:00",
+            "status": "in_progress",
+            "total_json_count": 3,
+            "processed_count": 1,
+            "processed_jsons": [os.path.join(sample_takeout, "Album1", "photo1.jpg.json")]
+        }
+        with open(os.path.join(output_dir, "_pef", "processing_state.json"), "w") as f:
+            json.dump(state_data, f)
+
+        progress_calls = []
+
+        def capture(current, total, message):
+            progress_calls.append((current, total, message))
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                orchestrator.process(on_progress=capture)
+
+        # Should have a [PREV] message with offset and original total
+        prev_calls = [(c, t, m) for c, t, m in progress_calls if "[PREV]" in m]
+        assert len(prev_calls) == 1
+        prev_current, prev_total, _ = prev_calls[0]
+        assert prev_current == 1  # 1 already processed
+        assert prev_total == 3    # original total of 3
+
+        # Phase 2 progress should use original total (3), not remaining (2)
+        phase2_calls = [(c, t, m) for c, t, m in progress_calls if "[2/3]" in m]
+        for current, total, _ in phase2_calls:
+            assert total == 3  # original total
+            assert current >= 1  # offset by skipped count
+
+    def test_fresh_run_progress_starts_at_zero(self, sample_takeout, temp_dir):
+        """Verify fresh run progress starts at 0 with full total."""
+        # Use a separate output dir outside source to avoid scanner picking up extra JSONs
+        output_dir = os.path.join(os.path.dirname(sample_takeout), "fresh_output")
+
+        progress_calls = []
+
+        def capture(current, total, message):
+            progress_calls.append((current, total, message))
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(sample_takeout, dest_path=output_dir)
+                orchestrator.process(on_progress=capture)
+
+        # Should not have any [PREV] messages
+        prev_calls = [m for _, _, m in progress_calls if "[PREV]" in m]
+        assert len(prev_calls) == 0
+
+        # Phase 2 progress should start at 0
+        phase2_calls = [(c, t, m) for c, t, m in progress_calls if "[2/3]" in m]
+        if phase2_calls:
+            first_current, first_total, _ = phase2_calls[0]
+            assert first_current == 0
+            assert first_total == 3  # all 3 JSONs
+
 
 class TestPEFOrchestratorProgressPhases:
     """Tests for progress message phase indicators."""
