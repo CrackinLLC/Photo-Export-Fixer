@@ -843,6 +843,15 @@ class PEFMainWindow:
                         if not self.root.winfo_exists() or not self._progress_view:
                             return
 
+                        # Handle prior-session resume indicator
+                        if m.startswith("[PREV] "):
+                            self._progress_view.add_prior_phase(
+                                "Prior session progress",
+                                f"{c:,} files processed"
+                            )
+                            self._progress_view.update_progress(c, t, m[7:])
+                            return
+
                         # Handle phase transition
                         if phase_key and phase_key != current_phase[0]:
                             current_phase[0] = phase_key

@@ -21,7 +21,11 @@ class InlineProgressView(ttk.Frame):
     Shows phase label with timer, progress bar, status message,
     completed phase history, total elapsed timer, and cancel button.
     Supports both determinate and indeterminate modes.
+    Includes an activity indicator (spinner) that animates independently.
     """
+
+    # Braille spinner characters for smooth animation
+    _SPINNER_CHARS = "\u28cb\u28d9\u28f9\u28f8\u28fc\u28f4\u28e6\u28e7\u28c7\u28cf"
 
     def __init__(self, parent: ttk.Frame, on_cancel=None, **kwargs):
         """Create inline progress view.
@@ -37,8 +41,10 @@ class InlineProgressView(ttk.Frame):
         self._current_phase = None
         self._completed_phases = []
         self._timer_id = None
+        self._spinner_id = None
+        self._spinner_index = 0
 
-        # === Current phase header (phase name + phase timer) ===
+        # === Current phase header (phase name + spinner + phase timer) ===
         phase_row = ttk.Frame(self)
         phase_row.pack(fill=tk.X, padx=20, pady=(20, 5))
 
@@ -49,6 +55,16 @@ class InlineProgressView(ttk.Frame):
             font=("", 12, "bold")
         )
         phase_label.pack(side=tk.LEFT)
+
+        # Activity indicator (spinner) — always animating while active
+        self._spinner_var = tk.StringVar(value=self._SPINNER_CHARS[0])
+        self._spinner_label = ttk.Label(
+            phase_row,
+            textvariable=self._spinner_var,
+            font=("", 12),
+            foreground="dodgerblue"
+        )
+        self._spinner_label.pack(side=tk.LEFT, padx=(6, 0))
 
         self._phase_timer_var = tk.StringVar(value="")
         phase_timer_label = ttk.Label(
@@ -125,8 +141,9 @@ class InlineProgressView(ttk.Frame):
             width=15
         )
 
-        # Start the 1-second timer tick
+        # Start the 1-second timer tick and spinner animation
         self._tick_timers()
+        self._tick_spinner()
 
     def _tick_timers(self):
         """Update timer displays every second."""
@@ -146,11 +163,24 @@ class InlineProgressView(ttk.Frame):
 
         self._timer_id = self.after(1000, self._tick_timers)
 
+    def _tick_spinner(self):
+        """Animate the activity spinner every 200ms."""
+        if not self.winfo_exists():
+            return
+
+        self._spinner_index = (self._spinner_index + 1) % len(self._SPINNER_CHARS)
+        self._spinner_var.set(self._SPINNER_CHARS[self._spinner_index])
+        self._spinner_id = self.after(200, self._tick_spinner)
+
     def stop_timers(self):
-        """Stop the timer tick. Call on completion or cancellation."""
+        """Stop the timer tick and spinner. Call on completion or cancellation."""
         if self._timer_id is not None:
             self.after_cancel(self._timer_id)
             self._timer_id = None
+        if self._spinner_id is not None:
+            self.after_cancel(self._spinner_id)
+            self._spinner_id = None
+            self._spinner_var.set("")
 
     def set_title(self, title: str):
         """Set the progress title (kept for compatibility but now unused by default)."""
@@ -221,6 +251,45 @@ class InlineProgressView(ttk.Frame):
         time_label.pack(side=tk.RIGHT)
 
         # Show separator above total once we have history
+        if len(self._completed_phases) == 1:
+            self._sep.pack(fill=tk.X, padx=20, pady=(2, 2))
+
+    def add_prior_phase(self, phase_label: str, note: str = "completed previously"):
+        """Add a phase from a prior session to the history display.
+
+        Args:
+            phase_label: Phase label (e.g., "Phase 1/3: Scanning").
+            note: Note to show instead of elapsed time.
+        """
+        self._completed_phases.append((phase_label, 0))
+
+        row = ttk.Frame(self._history_frame)
+        row.pack(fill=tk.X, pady=1)
+
+        name_label = ttk.Label(
+            row,
+            text=phase_label,
+            font=("", 9),
+            foreground="gray"
+        )
+        name_label.pack(side=tk.LEFT)
+
+        dots = ttk.Label(
+            row,
+            text=" " + "." * 20 + " ",
+            font=("", 9),
+            foreground="gray"
+        )
+        dots.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        note_label = ttk.Label(
+            row,
+            text=note,
+            font=("", 9, "italic"),
+            foreground="gray"
+        )
+        note_label.pack(side=tk.RIGHT)
+
         if len(self._completed_phases) == 1:
             self._sep.pack(fill=tk.X, padx=20, pady=(2, 2))
 
