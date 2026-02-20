@@ -29,7 +29,7 @@ class Settings:
         if os.name == "nt":  # Windows
             base = os.environ.get("APPDATA", os.path.expanduser("~"))
         else:  # macOS/Linux
-            base = os.path.expanduser("~/.config")
+            base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
 
         config_dir = os.path.join(base, "pef")
         os.makedirs(config_dir, exist_ok=True)
