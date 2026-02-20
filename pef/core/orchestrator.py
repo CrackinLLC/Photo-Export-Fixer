@@ -169,6 +169,13 @@ class PEFOrchestrator:
         scanner = FileScanner(self.source_path)
         scanner.scan(on_progress, cancel_event=cancel_event)
 
+        # Check cancel after scan phase
+        if cancel_event and cancel_event.is_set():
+            result.cancelled = True
+            if on_progress:
+                on_progress(0, 0, "Preview cancelled")
+            return result
+
         result.json_count = scanner.json_count
         result.file_count = scanner.file_count
 
@@ -349,6 +356,15 @@ class PEFOrchestrator:
 
             scanner = FileScanner(self.source_path)
             scanner.scan(on_progress=scan_progress if on_progress else None, cancel_event=cancel_event)
+
+        # Check cancel after scan phase
+        if cancel_event and cancel_event.is_set():
+            end_time = time.time()
+            result.cancelled = True
+            result.elapsed_time = round(end_time - start_time, 3)
+            result.end_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            self._clear_cache()
+            return result
 
         # Initialize or update state manager (stored in _pef for resume)
         self._active_state = StateManager(pef_dir)
