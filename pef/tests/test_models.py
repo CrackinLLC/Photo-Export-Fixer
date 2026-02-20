@@ -44,14 +44,30 @@ class TestGeoData:
         data = {"latitude": 40.7}
         assert GeoData.from_dict(data) is None
 
-    def test_from_dict_zero_coords_are_valid(self):
-        """(0,0) is a valid location (Gulf of Guinea) and should be accepted."""
+    def test_from_dict_zero_coords_returns_none(self):
+        """(0,0) is a Google Takeout placeholder for 'no GPS' and should return None."""
         data = {"latitude": 0, "longitude": 0}
-        geo = GeoData.from_dict(data)
+        assert GeoData.from_dict(data) is None
 
-        assert geo is not None
-        assert geo.latitude == 0
-        assert geo.longitude == 0
+    def test_from_dict_zero_float_coords_returns_none(self):
+        """(0.0, 0.0) should also return None."""
+        data = {"latitude": 0.0, "longitude": 0.0}
+        assert GeoData.from_dict(data) is None
+
+    def test_from_dict_non_numeric_latitude(self):
+        """Non-numeric latitude should return None."""
+        data = {"latitude": "40.7", "longitude": -74.0}
+        assert GeoData.from_dict(data) is None
+
+    def test_from_dict_non_numeric_longitude(self):
+        """Non-numeric longitude should return None."""
+        data = {"latitude": 40.7, "longitude": "bad"}
+        assert GeoData.from_dict(data) is None
+
+    def test_from_dict_none_latitude_value(self):
+        """None latitude value should return None."""
+        data = {"latitude": None, "longitude": -74.0}
+        assert GeoData.from_dict(data) is None
 
     def test_from_dict_default_altitude(self):
         """Missing altitude should default to 0."""
@@ -213,13 +229,18 @@ class TestJsonMetadata:
         assert meta.get_coordinates_string() is None
 
     def test_get_coordinates_string_zero_coords(self):
-        """Verify get_coordinates_string works for (0,0) location."""
+        """Verify get_coordinates_string returns None for (0,0) GeoData.
+
+        GeoData(0,0) can still be constructed directly, but from_dict
+        rejects it. This test verifies coordinate string formatting still works.
+        """
         meta = JsonMetadata(
             filepath="/test.json",
             title="test.jpg",
             date=datetime.now(),
             geo_data=GeoData(0.0, 0.0)
         )
+        # GeoData(0,0) is still valid when constructed directly
         assert meta.get_coordinates_string() == "0.0,0.0"
 
 
