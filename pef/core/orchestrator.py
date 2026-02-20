@@ -698,7 +698,7 @@ class PEFOrchestrator:
 
                 path = future_to_path[future]
                 try:
-                    results[path] = future.result(timeout=1.0)
+                    results[path] = future.result()
                 except Exception as e:
                     logger.debug(f"Thread error reading {path}: {e}")
                     results[path] = None

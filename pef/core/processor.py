@@ -7,7 +7,7 @@ import logging
 import os
 import shutil
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -357,8 +357,10 @@ class FileProcessor:
                 for task in tasks
             }
 
-            # Collect results as they complete, using timeouts to allow
-            # cancel checks between blocked futures.
+            # Collect results as they complete with cancel checks.
+            # as_completed() only yields futures that are done, so
+            # future.result() returns immediately — no timeout needed.
+            # The cancel check between iterations is sufficient.
             # Thread safety note: stats mutations (processed, errors) and
             # metadata queue writes happen here in the main thread's
             # as_completed() loop, NOT inside worker threads. Workers only
@@ -372,7 +374,7 @@ class FileProcessor:
 
                 file, metadata, dest_path = future_to_task[future]
                 try:
-                    _, error = future.result(timeout=1.0)
+                    _, error = future.result()
 
                     if error and error.startswith("Error:"):
                         # Copy failed - track as error
@@ -398,25 +400,6 @@ class FileProcessor:
 
                     self.stats.processed += 1
                     results.append((file, dest_path, error))
-
-                except TimeoutError:
-                    # Future not ready yet — check cancel and retry
-                    if self.cancel_event and self.cancel_event.is_set():
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        break
-                    # Wait for it to complete (it's already running)
-                    try:
-                        _, error = future.result()
-                        file.output_path = dest_path
-                        file.json_path = metadata.filepath
-                        if error and error.startswith("Error:"):
-                            self.stats.errors += 1
-                        else:
-                            self.stats.processed += 1
-                        results.append((file, dest_path, error))
-                    except Exception as e:
-                        self.stats.errors += 1
-                        results.append((file, dest_path, f"Error: {e}"))
 
                 except Exception as e:
                     error_msg = f"Error: {e}"
