@@ -153,6 +153,7 @@ class PEFMainWindow:
 
         # Cancel event for cooperative cancellation
         self._cancel_event = None
+        self._is_preview_mode = False
         self._progress_view = None
 
         # Build UI
@@ -492,16 +493,27 @@ class PEFMainWindow:
         if not self._cancel_event:
             return
 
-        confirmed = messagebox.askyesno(
-            "Cancel Processing",
-            "Are you sure you want to cancel?\n\n"
-            "Progress will be saved. You can resume later."
-        )
+        # Detect whether we're in preview or process mode
+        is_preview = self._is_preview_mode
+
+        if is_preview:
+            title = "Cancel Preview"
+            message = "Are you sure you want to cancel the preview?"
+            cancel_status = "Cancelling..."
+        else:
+            title = "Cancel Processing"
+            message = (
+                "Are you sure you want to cancel?\n\n"
+                "Progress will be saved. You can resume later."
+            )
+            cancel_status = "Cancelling... saving progress"
+
+        confirmed = messagebox.askyesno(title, message)
         if confirmed:
             self._cancel_event.set()
             if self._progress_view:
                 self._progress_view.disable_cancel()
-                self._progress_view.set_status("Cancelling... saving progress")
+                self._progress_view.set_status(cancel_status)
             self.status_var.set("Cancelling...")
 
     def _run_async(self, status_msg: str, title: str, operation, on_complete):
@@ -543,6 +555,7 @@ class PEFMainWindow:
         if not self.root.winfo_exists():
             return
         self._cancel_event = None
+        self._is_preview_mode = False
         self._show_setup_view()
         on_complete(result)
 
@@ -551,6 +564,7 @@ class PEFMainWindow:
         if not self.root.winfo_exists():
             return
         self._cancel_event = None
+        self._is_preview_mode = False
         self._show_setup_view()
         self.status_var.set("Ready")
         messagebox.showerror("Error", error_msg)
@@ -560,15 +574,22 @@ class PEFMainWindow:
         if not self._validate_source():
             return
 
+        self._cancel_event = threading.Event()
+        self._is_preview_mode = True
+        cancel_event = self._cancel_event
         self._run_async(
             "Analyzing...",
             "Analyzing Files",
-            lambda orch, cb: orch.dry_run(on_progress=cb),
+            lambda orch, cb: orch.dry_run(on_progress=cb, cancel_event=cancel_event),
             self._show_dry_run_results
         )
 
     def _show_dry_run_results(self, result):
         """Show dry run results in a dialog."""
+        if result.cancelled:
+            self.status_var.set("Preview cancelled")
+            return
+
         # Determine EXIF status message
         if result.exiftool_available:
             if self.write_exif.get():
@@ -629,6 +650,7 @@ ExifTool: {exif_status}"""
 
         force = self.force_restart.get()
         self._cancel_event = threading.Event()
+        self._is_preview_mode = False
         cancel_event = self._cancel_event
         self._run_async(
             "Processing...",

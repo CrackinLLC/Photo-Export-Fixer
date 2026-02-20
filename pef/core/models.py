@@ -159,6 +159,7 @@ class DryRunResult:
     with_people: int = 0
     exiftool_available: bool = False
     exiftool_path: Optional[str] = None
+    cancelled: bool = False
     errors: List[str] = field(default_factory=list)
 
 
