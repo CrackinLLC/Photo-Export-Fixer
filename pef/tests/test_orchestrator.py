@@ -610,6 +610,86 @@ class TestPEFOrchestratorReadJson:
         assert result is None
         assert any("non-Takeout JSON" in msg and "photoTakenTime" in msg for msg in caplog.messages)
 
+    def test_returns_none_for_json_array_root(self, temp_dir):
+        """JSON with array root should return None."""
+        json_path = os.path.join(temp_dir, "array.json")
+        with open(json_path, "w") as f:
+            json.dump([{"title": "photo.jpg"}], f)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        result = orchestrator._read_json(json_path)
+        assert result is None
+
+    def test_returns_none_for_json_string_root(self, temp_dir):
+        """JSON with string root should return None."""
+        json_path = os.path.join(temp_dir, "string.json")
+        with open(json_path, "w") as f:
+            json.dump("just a string", f)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        result = orchestrator._read_json(json_path)
+        assert result is None
+
+    def test_logs_non_object_json(self, temp_dir, caplog):
+        """Non-object JSON logs a non-Takeout debug message."""
+        import logging
+        json_path = os.path.join(temp_dir, "array.json")
+        with open(json_path, "w") as f:
+            json.dump([1, 2, 3], f)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        with caplog.at_level(logging.DEBUG, logger="pef.core.orchestrator"):
+            result = orchestrator._read_json(json_path)
+
+        assert result is None
+        assert any("not an object" in msg for msg in caplog.messages)
+
+    def test_returns_none_for_negative_timestamp(self, temp_dir):
+        """Negative timestamp should return None (OSError on Windows)."""
+        json_path = os.path.join(temp_dir, "test.json")
+        json_data = {
+            "title": "photo.jpg",
+            "photoTakenTime": {"timestamp": "-1"},
+        }
+        with open(json_path, "w") as f:
+            json.dump(json_data, f)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        result = orchestrator._read_json(json_path)
+        assert result is None
+
+    def test_returns_none_for_overflow_timestamp(self, temp_dir):
+        """Overflow timestamp should return None."""
+        json_path = os.path.join(temp_dir, "test.json")
+        json_data = {
+            "title": "photo.jpg",
+            "photoTakenTime": {"timestamp": "99999999999999"},
+        }
+        with open(json_path, "w") as f:
+            json.dump(json_data, f)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        result = orchestrator._read_json(json_path)
+        assert result is None
+
+    def test_valid_json_with_valid_gps_still_works(self, temp_dir):
+        """Valid JSON with real GPS coordinates should still parse correctly."""
+        json_path = os.path.join(temp_dir, "test.json")
+        json_data = {
+            "title": "photo.jpg",
+            "photoTakenTime": {"timestamp": "1609459200"},
+            "geoData": {"latitude": 40.7128, "longitude": -74.0060},
+        }
+        with open(json_path, "w") as f:
+            json.dump(json_data, f)
+
+        orchestrator = PEFOrchestrator(temp_dir)
+        result = orchestrator._read_json(json_path)
+
+        assert result is not None
+        assert result.geo_data is not None
+        assert result.geo_data.latitude == 40.7128
+
     def test_timestamp_converts_utc_epoch_to_local_datetime(self, temp_dir):
         """Verify UTC epoch timestamp is converted to local datetime.
 

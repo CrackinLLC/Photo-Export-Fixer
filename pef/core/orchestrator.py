@@ -680,6 +680,12 @@ class PEFOrchestrator:
             else:
                 content = json.loads(raw.decode("utf-8"))
 
+            if not isinstance(content, dict):
+                logger.debug(
+                    "Skipping non-Takeout JSON (not an object): %s", path
+                )
+                return None
+
             if not content or "title" not in content:
                 logger.debug(
                     "Skipping non-Takeout JSON (missing 'title' field): %s", path
@@ -707,7 +713,7 @@ class PEFOrchestrator:
                 people=Person.from_list(content.get("people")),
                 description=content.get("description", "")
             )
-        except (ValueError, KeyError, TypeError) as e:
+        except (ValueError, KeyError, TypeError, OSError, OverflowError) as e:
             logger.debug("Invalid/corrupt JSON %s: %s", path, e)
             return None
         except Exception as e:

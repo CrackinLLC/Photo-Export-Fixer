@@ -59,6 +59,7 @@ def sample_takeout(temp_dir: str) -> str:
         json.dump({
             "title": "photo2.jpg",
             "photoTakenTime": {"timestamp": "1612137600"},  # 2021-02-01
+            "geoData": {"latitude": 0.0, "longitude": 0.0, "altitude": 0.0},
         }, f)
 
     # Video without JSON (unmatched)

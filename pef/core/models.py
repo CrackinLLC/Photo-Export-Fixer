@@ -34,19 +34,29 @@ class GeoData:
 
     @classmethod
     def from_dict(cls, data: Optional[Dict]) -> Optional["GeoData"]:
-        """Create from geoData dict, or None if missing/empty.
+        """Create from geoData dict, or None if missing/empty/invalid.
 
-        Note: (0,0) coordinates are valid (equator/prime meridian intersection)
-        and will be accepted. Only missing/None data is rejected.
+        Returns None for:
+        - Missing or empty data
+        - Missing latitude/longitude keys
+        - Non-numeric latitude/longitude values
+        - (0.0, 0.0) coordinates (Google Takeout placeholder for "no GPS")
         """
         if not data:
             return None
         # Check for required keys - latitude and longitude must be present
         if "latitude" not in data or "longitude" not in data:
             return None
+        lat = data["latitude"]
+        lng = data["longitude"]
+        if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+            return None
+        # Google Takeout uses (0, 0) as a placeholder for "no GPS data"
+        if lat == 0.0 and lng == 0.0:
+            return None
         return cls(
-            latitude=data["latitude"],
-            longitude=data["longitude"],
+            latitude=lat,
+            longitude=lng,
             altitude=data.get("altitude", 0.0)
         )
 
