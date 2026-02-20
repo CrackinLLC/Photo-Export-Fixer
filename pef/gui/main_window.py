@@ -604,8 +604,9 @@ ExifTool: {exif_status}"""
         # Check ExifTool if EXIF writing is enabled
         if self.write_exif.get() and not is_exiftool_available():
             result = messagebox.askyesnocancel(
-                "ExifTool Not Found",
-                "ExifTool is not installed. Without it, GPS coordinates and people tags won't be written.\n\n"
+                "ExifTool Not Available",
+                "ExifTool is not installed or not working.\n"
+                "Without it, GPS coordinates and people tags won't be written.\n\n"
                 "Do you want to continue anyway?\n\n"
                 "Yes = Continue without EXIF\n"
                 "No = Show installation instructions\n"
@@ -662,6 +663,13 @@ ExifTool: {exif_status}"""
 
         if result.motion_photo_count > 0:
             lines.append(f"Motion photos: {result.motion_photo_count:,}")
+
+        if result.errors:
+            lines.append(f"\nWarnings ({len(result.errors)}):")
+            for error in result.errors[:5]:
+                lines.append(f"  {error}")
+            if len(result.errors) > 5:
+                lines.append(f"  ... and {len(result.errors) - 5} more")
 
         lines.append(f"\nTime: {result.elapsed_time:.1f} seconds")
         lines.append(f"\nOutput folder:\n{result.output_dir}")
