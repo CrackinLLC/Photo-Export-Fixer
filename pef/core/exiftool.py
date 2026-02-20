@@ -240,6 +240,11 @@ def auto_download_exiftool(base_dir: str) -> bool:
     import zipfile
 
     tools_dir = os.path.join(base_dir, EXIFTOOL_DIR)
+
+    # Clean up any previous installation to avoid conflicts
+    # (e.g., leftover exiftool_files/ from a failed or old install)
+    if os.path.isdir(tools_dir):
+        shutil.rmtree(tools_dir, ignore_errors=True)
     os.makedirs(tools_dir, exist_ok=True)
 
     zip_path = os.path.join(tools_dir, "exiftool.zip")
