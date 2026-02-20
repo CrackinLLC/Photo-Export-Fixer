@@ -1,9 +1,12 @@
 """Logging utilities for Photo Export Fixer."""
 
+import logging
 import os
 import sys
 import time
 from typing import Optional, TextIO, List, Dict, Any, Union
+
+logger = logging.getLogger(__name__)
 
 
 class BufferedLogger:
@@ -295,39 +298,43 @@ class PEFLogger:
         else:
             duration = f"{elapsed_time:.1f}s"
 
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write("Photo Export Fixer - Processing Summary\n")
-            f.write("=" * 40 + "\n\n")
-            f.write(f"Source:    {source_path}\n")
-            f.write(f"Output:    {output_dir}\n")
-            f.write(f"Started:   {start_time}\n")
-            f.write(f"Completed: {end_time}\n")
-            f.write(f"Duration:  {duration}\n\n")
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write("Photo Export Fixer - Processing Summary\n")
+                f.write("=" * 40 + "\n\n")
+                f.write(f"Source:    {source_path}\n")
+                f.write(f"Output:    {output_dir}\n")
+                f.write(f"Started:   {start_time}\n")
+                f.write(f"Completed: {end_time}\n")
+                f.write(f"Duration:  {duration}\n\n")
 
-            f.write(f"Files Processed:     {stats.processed:,}\n")
-            f.write(f"  With GPS data:     {stats.with_gps:,}\n")
-            f.write(f"  With people tags:  {stats.with_people:,}\n")
+                f.write(f"Files Processed:     {stats.processed:,}\n")
+                f.write(f"  With GPS data:     {stats.with_gps:,}\n")
+                f.write(f"  With people tags:  {stats.with_people:,}\n")
 
-            if unprocessed_count > 0:
-                f.write(f"Files Unprocessed:   {unprocessed_count:,}  (see unprocessed.txt)\n")
-            else:
-                f.write("Files Unprocessed:   0\n")
+                if unprocessed_count > 0:
+                    f.write(f"Files Unprocessed:   {unprocessed_count:,}  (see unprocessed.txt)\n")
+                else:
+                    f.write("Files Unprocessed:   0\n")
 
-            if motion_photo_count > 0:
-                f.write(f"Motion Photos:       {motion_photo_count:,}  (see motion_photos.txt)\n")
+                if motion_photo_count > 0:
+                    f.write(f"Motion Photos:       {motion_photo_count:,}  (see motion_photos.txt)\n")
 
-            if unmatched_json_count > 0:
-                f.write(f"Unmatched JSONs:     {unmatched_json_count:,}  (see unmatched_data/)\n")
+                if unmatched_json_count > 0:
+                    f.write(f"Unmatched JSONs:     {unmatched_json_count:,}  (see unmatched_data/)\n")
 
-            if stats.errors > 0:
-                f.write(f"Errors:              {stats.errors:,}\n")
+                if stats.errors > 0:
+                    f.write(f"Errors:              {stats.errors:,}\n")
 
-            f.write("\n")
-            if exiftool_available:
-                path_str = exiftool_path if exiftool_path else "in PATH"
-                f.write(f"ExifTool: Available ({path_str})\n")
-            else:
-                f.write("ExifTool: Not available (metadata not written)\n")
+                f.write("\n")
+                if exiftool_available:
+                    path_str = exiftool_path if exiftool_path else "in PATH"
+                    f.write(f"ExifTool: Available ({path_str})\n")
+                else:
+                    f.write("ExifTool: Not available (metadata not written)\n")
+        except OSError as e:
+            logger.warning(f"Failed to write summary: {e}")
+            return ""
 
         return filepath
 
@@ -348,12 +355,16 @@ class PEFLogger:
 
         filepath = os.path.join(self.pef_dir, "unprocessed.txt")
 
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write("# Files without metadata\n")
-            f.write("# Format: relative_path | reason\n\n")
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write("# Files without metadata\n")
+                f.write("# Format: relative_path | reason\n\n")
 
-            for item in items:
-                f.write(f"{item.relative_path} | {item.reason}\n")
+                for item in items:
+                    f.write(f"{item.relative_path} | {item.reason}\n")
+        except OSError as e:
+            logger.warning(f"Failed to write unprocessed list: {e}")
+            return None
 
         return filepath
 
@@ -374,18 +385,22 @@ class PEFLogger:
 
         filepath = os.path.join(self.pef_dir, "motion_photos.txt")
 
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write("Motion Photos Information\n")
-            f.write("=" * 40 + "\n\n")
-            f.write("Motion Photos are short video clips captured alongside still images.\n")
-            f.write("Google Photos stores these as separate .MP files alongside the .jpg.\n\n")
-            f.write("These files have been preserved in their original locations. If you're\n")
-            f.write("importing to Immich or similar platforms, you may need to:\n")
-            f.write("- Rename .MP to .MP4 for compatibility\n")
-            f.write("- Or use the --rename-mp flag when running PEF\n\n")
-            f.write(f"Motion photo files found ({len(items)} total):\n\n")
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write("Motion Photos Information\n")
+                f.write("=" * 40 + "\n\n")
+                f.write("Motion Photos are short video clips captured alongside still images.\n")
+                f.write("Google Photos stores these as separate .MP files alongside the .jpg.\n\n")
+                f.write("These files have been preserved in their original locations. If you're\n")
+                f.write("importing to Immich or similar platforms, you may need to:\n")
+                f.write("- Rename .MP to .MP4 for compatibility\n")
+                f.write("- Or use the --rename-mp flag when running PEF\n\n")
+                f.write(f"Motion photo files found ({len(items)} total):\n\n")
 
-            for item in items:
-                f.write(f"{item.relative_path}\n")
+                for item in items:
+                    f.write(f"{item.relative_path}\n")
+        except OSError as e:
+            logger.warning(f"Failed to write motion photos list: {e}")
+            return None
 
         return filepath
