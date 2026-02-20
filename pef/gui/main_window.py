@@ -728,6 +728,8 @@ class PEFMainWindow:
         """Handle cancel button click with confirmation dialog."""
         if not self._cancel_event:
             return
+        if self._cancel_event.is_set():
+            return  # Already cancelling
 
         # Detect whether we're in preview or process mode
         is_preview = self._is_preview_mode
@@ -907,6 +909,12 @@ class PEFMainWindow:
 
     def _on_dry_run(self):
         """Handle dry run button click."""
+        if self._processing_thread and self._processing_thread.is_alive():
+            messagebox.showwarning(
+                "Processing Active",
+                "A previous operation is still finishing. Please wait."
+            )
+            return
         if not self._validate_source():
             return
 
@@ -958,6 +966,12 @@ ExifTool: {exif_status}"""
 
     def _on_process(self):
         """Handle process button click."""
+        if self._processing_thread and self._processing_thread.is_alive():
+            messagebox.showwarning(
+                "Processing Active",
+                "A previous operation is still finishing. Please wait."
+            )
+            return
         if not self._validate_source():
             return
 
@@ -1071,7 +1085,23 @@ ExifTool: {exif_status}"""
             messagebox.showerror("Error", f"Could not open folder:\n{e}")
 
     def _on_close(self):
-        """Handle window close - save settings."""
+        """Handle window close - save progress if processing, then save settings."""
+        # If processing is active, signal cancel and save progress before closing
+        if self._processing_thread and self._processing_thread.is_alive():
+            if self._cancel_event:
+                self._cancel_event.set()
+            if self._orchestrator:
+                try:
+                    self._orchestrator.save_progress()
+                except Exception:
+                    pass
+
+        # Cancel timers
+        self._cancel_force_quit_timer()
+        if self._progress_view:
+            self._progress_view.stop_timers()
+
+        # Save settings and close
         self.settings.set("last_source_path", self.source_path.get())
         self.settings.set("last_dest_path", self.dest_path.get())
         self.settings.set("write_exif", self.write_exif.get())
