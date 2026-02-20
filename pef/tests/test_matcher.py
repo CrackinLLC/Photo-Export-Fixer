@@ -295,6 +295,67 @@ class TestTier3CaseInsensitiveMatching:
         assert result.files[0].filename == "photo-edited.jpg"
 
 
+class TestHighBracketMatching:
+    """Tests for bracket matching beyond (10)."""
+
+    def test_tier2_matches_bracket_15(self):
+        """Tier 2 matches suffix+(15) combination."""
+        index = {
+            ("Album1", "photo-edited(15).jpg"): [
+                FileInfo("photo-edited(15).jpg", "/path/Album1/photo-edited(15).jpg", "Album1")
+            ],
+        }
+        matcher = FileMatcher(index, suffixes=["", "-edited"])
+        result = matcher.find_match("/path/Album1/photo.jpg.json", "photo.jpg")
+
+        assert result.found is True
+        assert result.files[0].filename == "photo-edited(15).jpg"
+
+    def test_tier2_matches_bracket_50(self):
+        """Tier 2 matches suffix+(50) combination."""
+        index = {
+            ("Album1", "photo-edited(50).jpg"): [
+                FileInfo("photo-edited(50).jpg", "/path/Album1/photo-edited(50).jpg", "Album1")
+            ],
+        }
+        matcher = FileMatcher(index, suffixes=["", "-edited"])
+        result = matcher.find_match("/path/Album1/photo.jpg.json", "photo.jpg")
+
+        assert result.found is True
+        assert result.files[0].filename == "photo-edited(50).jpg"
+
+    def test_find_all_related_includes_bracket_15(self):
+        """find_all_related_files discovers files with bracket (15)."""
+        index = {
+            ("Album1", "photo.jpg"): [
+                FileInfo("photo.jpg", "/path/Album1/photo.jpg", "Album1")
+            ],
+            ("Album1", "photo-edited(15).jpg"): [
+                FileInfo("photo-edited(15).jpg", "/path/Album1/photo-edited(15).jpg", "Album1")
+            ],
+        }
+        matcher = FileMatcher(index, suffixes=["", "-edited"])
+        result = matcher.find_all_related_files("/path/Album1/photo.jpg.json", "photo.jpg")
+
+        assert result.found is True
+        filenames = [f.filename for f in result.files]
+        assert "photo.jpg" in filenames
+        assert "photo-edited(15).jpg" in filenames
+
+    def test_find_all_related_includes_bracket_50(self):
+        """find_all_related_files discovers files with bracket (50)."""
+        index = {
+            ("Album1", "photo-edited(50).jpg"): [
+                FileInfo("photo-edited(50).jpg", "/path/Album1/photo-edited(50).jpg", "Album1")
+            ],
+        }
+        matcher = FileMatcher(index, suffixes=["", "-edited"])
+        result = matcher.find_all_related_files("/path/Album1/photo.jpg.json", "photo.jpg")
+
+        assert result.found is True
+        assert result.files[0].filename == "photo-edited(50).jpg"
+
+
 class TestDefaultSuffixes:
     """Tests for DEFAULT_SUFFIXES constant."""
 

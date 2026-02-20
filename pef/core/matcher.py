@@ -226,8 +226,8 @@ class FileMatcher:
             if not suffix:
                 continue  # Skip empty suffix, already tried without brackets
 
-            # Check for suffix+(n) combinations up to (10)
-            for n in range(1, 11):
+            # Check for suffix+(n) combinations up to (99)
+            for n in range(1, 100):
                 filename = f"{parsed.name}{suffix}({n}){parsed.extension}"
                 key = (album_name, filename)
 
@@ -312,9 +312,9 @@ class FileMatcher:
             if key in index:
                 all_files.extend(index[key])
 
-            # Also check for bracket variations (1) through (10)
+            # Also check for bracket variations (1) through (99)
             # This catches -edited(1), -edited(2), etc.
-            for n in range(1, 11):
+            for n in range(1, 100):
                 if parsed.duplicate_suffix:
                     # Already has bracket, don't add another
                     break
