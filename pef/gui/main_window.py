@@ -163,6 +163,9 @@ class PEFMainWindow:
         self._cancel_event = None
         self._is_preview_mode = False
         self._progress_view = None
+        self._force_quit_timer = None
+        self._processing_thread = None
+        self._orchestrator = None
 
         # Save settings on close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -732,15 +735,59 @@ class PEFMainWindow:
                 self._progress_view.set_status(cancel_status)
             self.status_var.set("Cancelling...")
 
+            # Start force-quit timer: if cancel hasn't completed in 30s,
+            # show a Force Quit button
+            self._force_quit_timer = self.root.after(
+                30000, self._show_force_quit
+            )
+
+    def _show_force_quit(self):
+        """Show the Force Quit button after cancel timeout."""
+        if not self.root.winfo_exists():
+            return
+        if self._progress_view:
+            self._progress_view.show_force_quit(self._on_force_quit)
+            self._progress_view.set_status(
+                "Cancel is taking too long. Force Quit will terminate immediately."
+            )
+
+    def _on_force_quit(self):
+        """Force quit the processing operation.
+
+        Saves progress state if possible, then terminates.
+        """
+        # Try to save state before force-quitting
+        if self._orchestrator:
+            try:
+                self._orchestrator.save_progress()
+            except Exception:
+                pass
+
+        self.status_var.set("Force quit — progress saved where possible")
+
+        # Clean up and return to setup view
+        self._cancel_force_quit_timer()
+        self._cancel_event = None
+        self._is_preview_mode = False
+        self._orchestrator = None
+        self._processing_thread = None
+        self._show_setup_view()
+
+    def _cancel_force_quit_timer(self):
+        """Cancel the force-quit timer if active."""
+        if self._force_quit_timer is not None:
+            self.root.after_cancel(self._force_quit_timer)
+            self._force_quit_timer = None
+
     def _run_async(self, status_msg: str, title: str, operation, on_complete):
         """Run an operation asynchronously with inline progress view."""
         self.status_var.set(status_msg)
         self._show_progress_view(title)
 
         def run():
-            success = False
             try:
                 orchestrator = self._create_orchestrator()
+                self._orchestrator = orchestrator
                 last_update = [0.0]
 
                 def progress_cb(c, t, m):
@@ -758,20 +805,23 @@ class PEFMainWindow:
 
                 result = operation(orchestrator, progress_cb)
                 self.root.after(0, lambda: self._on_operation_complete(result, on_complete))
-                success = True
             except Exception as e:
                 error_msg = str(e)
                 self.root.after(0, lambda: self._on_operation_error(error_msg))
 
         thread = threading.Thread(target=run, daemon=True)
+        self._processing_thread = thread
         thread.start()
 
     def _on_operation_complete(self, result, on_complete):
         """Handle operation completion on the main thread."""
         if not self.root.winfo_exists():
             return
+        self._cancel_force_quit_timer()
         self._cancel_event = None
         self._is_preview_mode = False
+        self._orchestrator = None
+        self._processing_thread = None
         self._show_setup_view()
         on_complete(result)
 
@@ -779,8 +829,11 @@ class PEFMainWindow:
         """Handle operation error on the main thread."""
         if not self.root.winfo_exists():
             return
+        self._cancel_force_quit_timer()
         self._cancel_event = None
         self._is_preview_mode = False
+        self._orchestrator = None
+        self._processing_thread = None
         self._show_setup_view()
         self.status_var.set("Ready")
         messagebox.showerror("Error", error_msg)
