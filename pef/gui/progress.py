@@ -330,7 +330,7 @@ class InlineProgressView(ttk.Frame):
             if self._progress["mode"] != "determinate":
                 self._progress.stop()
                 self._progress.configure(mode="determinate")
-            percent = int((current / total) * 100)
+            percent = min(100, int((current / total) * 100))
             self._progress["value"] = percent
             self._percent_var.set(f"{percent}% ({current:,} / {total:,})")
 

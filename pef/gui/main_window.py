@@ -47,10 +47,9 @@ class ScrollableFrame(ttk.Frame):
         self._content.bind("<Configure>", self._on_content_configure)
         self._canvas.bind("<Configure>", self._on_canvas_configure)
 
-        # Bind mousewheel
-        self._canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-        self._canvas.bind_all("<Button-4>", self._on_mousewheel)
-        self._canvas.bind_all("<Button-5>", self._on_mousewheel)
+        # Bind mousewheel only when cursor is over the scrollable area
+        self._canvas.bind("<Enter>", self._bind_mousewheel)
+        self._canvas.bind("<Leave>", self._unbind_mousewheel)
 
     def _on_content_configure(self, event=None):
         """Update scroll region when content changes."""
@@ -64,6 +63,18 @@ class ScrollableFrame(ttk.Frame):
     def _on_canvas_configure(self, event):
         """Update content width when canvas resizes."""
         self._canvas.itemconfig(self._canvas_window, width=event.width)
+
+    def _bind_mousewheel(self, event):
+        """Bind mousewheel events when cursor enters the scrollable area."""
+        self._canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self._canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self._canvas.bind_all("<Button-5>", self._on_mousewheel)
+
+    def _unbind_mousewheel(self, event):
+        """Unbind mousewheel events when cursor leaves the scrollable area."""
+        self._canvas.unbind_all("<MouseWheel>")
+        self._canvas.unbind_all("<Button-4>")
+        self._canvas.unbind_all("<Button-5>")
 
     def _on_mousewheel(self, event):
         """Handle mousewheel scrolling."""
@@ -178,26 +189,38 @@ class PEFMainWindow:
     def _startup_check(self):
         """Check dependencies on startup and show setup screen if needed.
 
-        Does a lightweight check for ExifTool (system PATH + local tools dir)
-        without triggering auto-download, so the GUI can show a setup screen
-        with progress feedback if a download is needed.
+        Shows the main UI immediately and runs ExifTool check in a background
+        thread so the GUI is never blocked (even if the check is slow).
         """
         _reset_exiftool_cache()
 
-        # Quick check: is ExifTool already installed?
-        if self._is_exiftool_installed():
+        # Always create the main UI immediately
+        self._create_widgets()
+
+        # Run ExifTool check in background thread
+        def check():
+            installed = self._is_exiftool_installed()
+            self.root.after(0, lambda: self._on_exiftool_check_complete(installed))
+
+        threading.Thread(target=check, daemon=True).start()
+
+    def _on_exiftool_check_complete(self, installed: bool):
+        """Handle ExifTool check result on the main thread."""
+        if not self.root.winfo_exists():
+            return
+
+        if installed:
             self._exiftool_available = True
-            self._create_widgets()
+            self._check_exiftool()
             return
 
         # ExifTool not found. On Windows, attempt auto-download with setup screen.
-        # On other platforms, just show main UI (user must install manually).
+        # On other platforms, just update UI status (user must install manually).
         if sys.platform != "win32":
-            self._create_widgets()
-            self.root.after(100, self._check_exiftool)
+            self._check_exiftool()
             return
 
-        # Show setup screen and attempt auto-download
+        # Show setup screen over the main UI and attempt auto-download
         self._show_setup_screen()
 
     def _is_exiftool_installed(self) -> bool:
