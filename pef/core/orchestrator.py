@@ -164,7 +164,7 @@ class PEFOrchestrator:
 
         # Phase 1: Scan files
         if on_progress:
-            on_progress(0, 100, "[1/2] Scanning files...")
+            on_progress(0, 0, "[1/2] Scanning files...")
 
         scanner = FileScanner(self.source_path)
         scanner.scan(on_progress)
@@ -212,7 +212,7 @@ class PEFOrchestrator:
                     return result
 
                 if on_progress and processed % interval == 0:
-                    on_progress(processed, total_jsons, f"[2/2] Analyzing: {os.path.basename(json_path)}")
+                    on_progress(processed, total_jsons, f"[2/2] Analyzing file {processed + 1:,} of {total_jsons:,}: {os.path.basename(json_path)}")
 
                 metadata = chunk_metadata.get(json_path)
                 if not metadata:
@@ -412,7 +412,7 @@ class PEFOrchestrator:
                         break
 
                     if on_progress and i % interval == 0:
-                        on_progress(i, total, f"[2/3] Processing: {os.path.basename(json_path)}")
+                        on_progress(i, total, f"[2/3] Matching file {i + 1:,} of {total:,}: {os.path.basename(json_path)}")
 
                     if i > 0 and i % 500 == 0:
                         processor.flush_metadata_writes()
@@ -458,8 +458,8 @@ class PEFOrchestrator:
                     if f.filepath not in matched_file_paths
                 ]
 
-                if not result.cancelled and on_progress:
-                    on_progress(0, len(unmatched_files), "[3/3] Copying unmatched files...")
+                if not result.cancelled and unmatched_files and on_progress:
+                    on_progress(0, len(unmatched_files), f"[3/3] Copying {len(unmatched_files):,} unmatched files...")
 
                 unmatched_interval = _adaptive_interval(len(unmatched_files))
 
@@ -472,7 +472,7 @@ class PEFOrchestrator:
                         break
 
                     if on_progress and i % unmatched_interval == 0:
-                        on_progress(i, len(unmatched_files), f"[3/3] Copying: {file_info.filename}")
+                        on_progress(i, len(unmatched_files), f"[3/3] Copying file {i + 1:,} of {len(unmatched_files):,}: {file_info.filename}")
 
                     try:
                         processor.copy_unmatched_file(file_info)

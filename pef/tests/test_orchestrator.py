@@ -999,7 +999,7 @@ class TestPEFOrchestratorProgressPhases:
         assert len(phase_messages) > 0
 
         # Check that processing phase exists
-        has_processing_phase = any("[2/3]" in m and "Processing" in m for m in messages)
+        has_processing_phase = any("[2/3]" in m and "Matching file" in m for m in messages)
         assert has_processing_phase
 
     def test_progress_updates_more_frequently_for_small_collections(self, sample_takeout):
@@ -1123,7 +1123,7 @@ class TestPipelinedProcess:
                 )
 
                 def tracking_progress(current, total, message):
-                    if "Processing:" in message:
+                    if "[2/3]" in message:
                         # Extract filename from progress message
                         processed_order.append(message)
 
