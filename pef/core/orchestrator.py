@@ -294,12 +294,9 @@ class PEFOrchestrator:
             output_dir = checkout_dir(self.dest_path, onlynew=True)
         else:
             # Fresh start or force — no prior state file exists
-            if exists(self.dest_path):
-                # Directory exists but no prior state — safe to reuse
-                output_dir = self.dest_path
-            else:
-                # Directory doesn't exist — create it
-                output_dir = checkout_dir(self.dest_path)
+            # Use checkout_dir for both cases: it creates missing dirs
+            # and raises ValueError if path exists as a file
+            output_dir = checkout_dir(self.dest_path)
 
         # Create _pef directory for all metadata/logs
         pef_dir = os.path.join(output_dir, PEF_DIR_NAME)

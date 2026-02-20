@@ -417,6 +417,50 @@ class TestPEFOrchestratorFreshStartDirectoryReuse:
         assert result.output_dir == output_dir
         assert os.path.isdir(output_dir)
 
+    def test_fresh_run_creates_deeply_nested_dir(self, sample_takeout, temp_dir):
+        """Deeply nested non-existent directory and all parents should be created."""
+        output_dir = os.path.join(temp_dir, "a", "b", "c", "deep_output")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=output_dir, write_exif=False
+                )
+                result = orchestrator.process()
+
+        assert result.output_dir == output_dir
+        assert os.path.isdir(output_dir)
+
+    def test_dry_run_accepts_nonexistent_dest(self, sample_takeout, temp_dir):
+        """Dry run should not error when destination directory doesn't exist."""
+        output_dir = os.path.join(temp_dir, "nonexistent_dest")
+
+        orchestrator = PEFOrchestrator(
+            sample_takeout, dest_path=output_dir, write_exif=False
+        )
+        result = orchestrator.dry_run()
+
+        assert len(result.errors) == 0 or all(
+            "dest" not in e.lower() and "output" not in e.lower()
+            for e in result.errors
+        )
+        # Dest should NOT be created during dry run
+        assert not os.path.exists(output_dir)
+
+    def test_process_rejects_file_as_dest(self, sample_takeout, temp_dir):
+        """Process should error when destination path exists as a file."""
+        dest_file = os.path.join(temp_dir, "not_a_dir")
+        with open(dest_file, "w") as f:
+            f.write("blocking file")
+
+        with patch('pef.core.processor.ExifToolManager'):
+            with patch('pef.core.processor.filedate'):
+                orchestrator = PEFOrchestrator(
+                    sample_takeout, dest_path=dest_file, write_exif=False
+                )
+                with pytest.raises(ValueError, match="exists as a file"):
+                    orchestrator.process()
+
     def test_force_reuses_existing_dir(self, sample_takeout, temp_dir):
         """Force mode with existing directory should reuse it."""
         output_dir = os.path.join(temp_dir, "output")
