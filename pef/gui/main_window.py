@@ -561,6 +561,15 @@ class PEFMainWindow:
             )
         # Button starts hidden, shown by _check_exiftool if needed
 
+        # Test ExifTool button (shown when ExifTool is available)
+        self.exif_test_btn = ttk.Button(
+            exif_frame,
+            text="Test",
+            command=self._test_exiftool,
+            width=6
+        )
+        # Starts hidden, shown by _check_exiftool when available
+
         # Force restart option
         force_check = ttk.Checkbutton(
             advanced_content,
@@ -602,8 +611,9 @@ class PEFMainWindow:
             self.exif_status.config(text="(available)", foreground="green")
             # Always enable when available, ignore saved settings
             self.write_exif.set(True)
-            # Hide install button
+            # Hide install button, show test button
             self.exif_install_btn.pack_forget()
+            self.exif_test_btn.pack(side=tk.LEFT, padx=(10, 0))
         else:
             # Platform-specific message
             if sys.platform == "win32":
@@ -611,8 +621,46 @@ class PEFMainWindow:
             else:
                 self.exif_status.config(text="(not found)", foreground="orange")
             self.write_exif.set(False)
-            # Show install button
+            # Show install button, hide test button
             self.exif_install_btn.pack(side=tk.LEFT, padx=(10, 0))
+            self.exif_test_btn.pack_forget()
+
+    def _test_exiftool(self):
+        """Test ExifTool by running it and showing the version."""
+        self.exif_test_btn.config(state="disabled")
+        self.status_var.set("Testing ExifTool...")
+
+        def test():
+            from pef.core.exiftool import get_exiftool_path, validate_exiftool
+            _reset_exiftool_cache()
+            path = get_exiftool_path()
+            if path:
+                version = validate_exiftool(path)
+                if version:
+                    return True, f"ExifTool v{version}\nPath: {path}"
+                return False, f"ExifTool found at {path} but failed validation."
+            return False, "ExifTool not found."
+
+        def on_result(result):
+            if not self.root.winfo_exists():
+                return
+            success, message = result
+            self.exif_test_btn.config(state="normal")
+            if success:
+                self.status_var.set("ExifTool is working")
+                self.exif_status.config(text="(available)", foreground="green")
+                messagebox.showinfo("ExifTool Test", f"ExifTool is working!\n\n{message}")
+            else:
+                self.status_var.set("ExifTool test failed")
+                self.exif_status.config(text="(not working)", foreground="red")
+                messagebox.showerror("ExifTool Test", f"ExifTool test failed.\n\n{message}")
+                self._check_exiftool()
+
+        def run():
+            result = test()
+            self.root.after(0, lambda: on_result(result))
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _try_install_exiftool(self):
         """Attempt to install ExifTool (Windows only).
