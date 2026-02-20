@@ -10,6 +10,8 @@ import pytest
 
 from pef.core.orchestrator import PEFOrchestrator, _adaptive_interval
 from pef.core.models import DryRunResult, ProcessRunResult, ProcessingStats
+from pef.core.logger import PEFLogger
+from pef.core.state import StateManager
 
 
 class TestAdaptiveInterval:
@@ -1674,3 +1676,116 @@ class TestCopyUnmatchedJsonsCancelSupport:
         for root, dirs, files in os.walk(unmatched_dir):
             copied_files.extend(files)
         assert len(copied_files) == 3
+
+
+class TestPEFLoggerWriteGuards:
+    """Tests for PEFLogger write methods handling OSError gracefully."""
+
+    def test_write_summary_returns_empty_on_oserror(self, temp_dir):
+        """Verify write_summary returns empty string on I/O failure."""
+        pef_dir = os.path.join(temp_dir, "_pef")
+        pef_logger = PEFLogger(pef_dir)
+
+        stats = Mock(processed=10, with_gps=5, with_people=3, errors=0)
+
+        with patch("builtins.open", side_effect=OSError("disk full")):
+            result = pef_logger.write_summary(
+                source_path="/src",
+                output_dir="/out",
+                stats=stats,
+                elapsed_time=1.5,
+                start_time="2024-01-01",
+                end_time="2024-01-01",
+            )
+
+        assert result == ""
+
+    def test_write_unprocessed_returns_none_on_oserror(self, temp_dir):
+        """Verify write_unprocessed returns None on I/O failure."""
+        pef_dir = os.path.join(temp_dir, "_pef")
+        pef_logger = PEFLogger(pef_dir)
+
+        item = Mock(relative_path="photo.jpg", reason="no metadata")
+
+        with patch("builtins.open", side_effect=OSError("disk full")):
+            result = pef_logger.write_unprocessed([item])
+
+        assert result is None
+
+    def test_write_motion_photos_returns_none_on_oserror(self, temp_dir):
+        """Verify write_motion_photos returns None on I/O failure."""
+        pef_dir = os.path.join(temp_dir, "_pef")
+        pef_logger = PEFLogger(pef_dir)
+
+        item = Mock(relative_path="video.MP")
+
+        with patch("builtins.open", side_effect=OSError("disk full")):
+            result = pef_logger.write_motion_photos([item])
+
+        assert result is None
+
+    def test_write_summary_no_exception_propagates(self, temp_dir):
+        """Verify OSError in write_summary does not propagate."""
+        pef_dir = os.path.join(temp_dir, "_pef")
+        pef_logger = PEFLogger(pef_dir)
+
+        stats = Mock(processed=0, with_gps=0, with_people=0, errors=0)
+
+        # Should not raise
+        with patch("builtins.open", side_effect=OSError("permission denied")):
+            pef_logger.write_summary(
+                source_path="/src",
+                output_dir="/out",
+                stats=stats,
+                elapsed_time=0.0,
+                start_time="now",
+                end_time="now",
+            )
+
+
+class TestStateManagerTempCleanup:
+    """Tests for StateManager cleaning up orphaned .state_*.tmp files."""
+
+    def test_load_cleans_stale_temp_files(self, temp_dir):
+        """Verify load() removes orphaned .state_*.tmp files."""
+        # Create orphaned temp files
+        tmp1 = os.path.join(temp_dir, ".state_abc123.tmp")
+        tmp2 = os.path.join(temp_dir, ".state_def456.tmp")
+        with open(tmp1, "w") as f:
+            f.write("stale")
+        with open(tmp2, "w") as f:
+            f.write("stale")
+
+        state = StateManager(temp_dir)
+        state.load()
+
+        assert not os.path.exists(tmp1)
+        assert not os.path.exists(tmp2)
+
+    def test_create_cleans_stale_temp_files(self, temp_dir):
+        """Verify create() removes orphaned .state_*.tmp files."""
+        tmp = os.path.join(temp_dir, ".state_old.tmp")
+        with open(tmp, "w") as f:
+            f.write("stale")
+
+        state = StateManager(temp_dir)
+        state.create("/source", 10)
+
+        assert not os.path.exists(tmp)
+
+    def test_cleanup_does_not_remove_non_temp_files(self, temp_dir):
+        """Verify cleanup only targets .state_*.tmp files."""
+        # Create files that should NOT be removed
+        keep1 = os.path.join(temp_dir, "processing_state.json")
+        keep2 = os.path.join(temp_dir, "other_file.tmp")
+        keep3 = os.path.join(temp_dir, ".state_data.json")
+        for path in [keep1, keep2, keep3]:
+            with open(path, "w") as f:
+                f.write("keep")
+
+        state = StateManager(temp_dir)
+        state.load()
+
+        assert os.path.exists(keep1)
+        assert os.path.exists(keep2)
+        assert os.path.exists(keep3)

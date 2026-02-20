@@ -83,12 +83,25 @@ class StateManager:
         state = self._read_state_file()
         return state is not None and state.get("status") == "completed"
 
+    def _cleanup_temp_files(self) -> None:
+        """Remove orphaned temp files from interrupted state saves."""
+        try:
+            for f in os.listdir(self.output_dir):
+                if f.startswith(".state_") and f.endswith(".tmp"):
+                    try:
+                        os.unlink(os.path.join(self.output_dir, f))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
     def load(self) -> bool:
         """Load existing state from file.
 
         Returns:
             True if state was loaded successfully.
         """
+        self._cleanup_temp_files()
         state = self._read_state_file()
         if not state:
             return False
@@ -107,6 +120,7 @@ class StateManager:
             source_path: Path to source directory being processed.
             total_count: Total number of JSON files to process.
         """
+        self._cleanup_temp_files()
         self._processed = set()
         self._source_path = source_path
         self._started_at = datetime.now().isoformat()
