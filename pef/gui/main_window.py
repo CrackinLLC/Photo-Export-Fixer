@@ -784,6 +784,8 @@ class PEFMainWindow:
 
         # Clean up and return to setup view
         self._cancel_force_quit_timer()
+        if self._progress_view:
+            self._progress_view.stop_timers()
         self._cancel_event = None
         self._is_preview_mode = False
         self._orchestrator = None
@@ -795,6 +797,15 @@ class PEFMainWindow:
         if self._force_quit_timer is not None:
             self.root.after_cancel(self._force_quit_timer)
             self._force_quit_timer = None
+
+    # Phase name mapping for display
+    _PHASE_NAMES = {
+        "1/2": ("Scanning", 2),
+        "2/2": ("Analyzing", 2),
+        "1/3": ("Scanning", 3),
+        "2/3": ("Processing", 3),
+        "3/3": ("Copying unmatched", 3),
+    }
 
     def _run_async(self, status_msg: str, title: str, orchestrator, operation, on_complete):
         """Run an operation asynchronously with inline progress view.
@@ -813,6 +824,7 @@ class PEFMainWindow:
             try:
                 self._orchestrator = orchestrator
                 last_update = [0.0]
+                current_phase = [None]
 
                 def progress_cb(c, t, m):
                     now = time.monotonic()
@@ -821,9 +833,28 @@ class PEFMainWindow:
                         return
                     last_update[0] = now
 
-                    def update_ui(c=c, t=t, m=m):
-                        if self.root.winfo_exists() and self._progress_view:
-                            self._progress_view.update_progress(c, t, m)
+                    # Detect phase transitions from [N/M] prefix
+                    phase_key = None
+                    if m.startswith("[") and "] " in m:
+                        bracket_end = m.index("]")
+                        phase_key = m[1:bracket_end]
+
+                    def update_ui(c=c, t=t, m=m, phase_key=phase_key):
+                        if not self.root.winfo_exists() or not self._progress_view:
+                            return
+
+                        # Handle phase transition
+                        if phase_key and phase_key != current_phase[0]:
+                            current_phase[0] = phase_key
+                            phase_info = self._PHASE_NAMES.get(phase_key)
+                            if phase_info:
+                                name, total_phases = phase_info
+                                phase_num = int(phase_key.split("/")[0])
+                                self._progress_view.set_phase(
+                                    phase_num, name, total_phases
+                                )
+
+                        self._progress_view.update_progress(c, t, m)
 
                     self.root.after(0, update_ui)
 
@@ -842,6 +873,8 @@ class PEFMainWindow:
         if not self.root.winfo_exists():
             return
         self._cancel_force_quit_timer()
+        if self._progress_view:
+            self._progress_view.stop_timers()
         self._cancel_event = None
         self._is_preview_mode = False
         self._processing_thread = None
@@ -853,6 +886,8 @@ class PEFMainWindow:
         if not self.root.winfo_exists():
             return
         self._cancel_force_quit_timer()
+        if self._progress_view:
+            self._progress_view.stop_timers()
         self._cancel_event = None
         self._is_preview_mode = False
         self._orchestrator = None
