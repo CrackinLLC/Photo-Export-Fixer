@@ -1,9 +1,7 @@
 """Tests for GUI components (non-interactive logic)."""
 
 import os
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 from pef.gui.settings import Settings
 
@@ -41,32 +39,3 @@ class TestSettingsXDGConfigHome:
             path = settings._get_config_path()
             assert "pef" in path
             assert "/custom/config" not in path
-
-
-class TestProgressClamping:
-    """Tests for progress percentage clamping."""
-
-    def test_progress_clamped_to_100(self):
-        """Progress percentage should not exceed 100% when current > total."""
-        # Test the clamping logic directly (same formula as progress.py:333)
-        current, total = 150, 100
-        percent = min(100, int((current / total) * 100))
-        assert percent == 100
-
-    def test_progress_normal_values(self):
-        """Normal progress values work correctly."""
-        current, total = 50, 100
-        percent = min(100, int((current / total) * 100))
-        assert percent == 50
-
-    def test_progress_at_100(self):
-        """Progress at exactly 100% works."""
-        current, total = 100, 100
-        percent = min(100, int((current / total) * 100))
-        assert percent == 100
-
-    def test_progress_at_zero(self):
-        """Progress at 0% works."""
-        current, total = 0, 100
-        percent = min(100, int((current / total) * 100))
-        assert percent == 0
