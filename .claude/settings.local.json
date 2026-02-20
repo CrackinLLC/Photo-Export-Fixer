@@ -30,11 +30,11 @@
       "Bash(eslint:*)"
     ]
   },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "den",
     "pride"
   ],
-  "enableAllProjectMcpServers": true,
   "additionalDirectories": [
     "../Photo-Export-Fixer"
   ]
