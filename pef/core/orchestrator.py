@@ -128,12 +128,15 @@ class PEFOrchestrator:
 
     def dry_run(
         self,
-        on_progress: Optional[ProgressCallback] = None
+        on_progress: Optional[ProgressCallback] = None,
+        cancel_event: Optional[threading.Event] = None
     ) -> DryRunResult:
         """Preview what would be processed without making changes.
 
         Args:
             on_progress: Optional callback for progress updates.
+            cancel_event: Optional threading.Event for cooperative cancellation.
+                When set, analysis stops and returns partial results.
 
         Returns:
             DryRunResult with counts and statistics.
@@ -182,10 +185,22 @@ class PEFOrchestrator:
             on_progress(0, total_jsons, "[2/2] Analyzing metadata...")
 
         for chunk_start in range(0, total_jsons, chunk_size):
+            if cancel_event and cancel_event.is_set():
+                result.cancelled = True
+                if on_progress:
+                    on_progress(processed, total_jsons, "Preview cancelled")
+                return result
+
             chunk_paths = scanner.jsons[chunk_start:chunk_start + chunk_size]
             chunk_metadata = self._read_jsons_batch(chunk_paths)
 
             for json_path in chunk_paths:
+                if cancel_event and cancel_event.is_set():
+                    result.cancelled = True
+                    if on_progress:
+                        on_progress(processed, total_jsons, "Preview cancelled")
+                    return result
+
                 if on_progress and processed % interval == 0:
                     on_progress(processed, total_jsons, f"[2/2] Analyzing: {os.path.basename(json_path)}")
 
