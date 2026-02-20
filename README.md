@@ -1,35 +1,29 @@
 # Photo Export Fixer (PEF)
 
-Google Takeout exports your photos with metadata stored in separate JSON files rather than embedded in the images themselves. This means your photos often show up with incorrect dates, no GPS coordinates, and missing people tags when imported into other applications.
+When you export your photos from Google Photos using [Google Takeout](https://takeout.google.com/), the metadata (dates, GPS coordinates, people tags) gets stored in separate `.json` files instead of being embedded in the images. This means your photos show incorrect dates, have no location info, and lose their people tags when you import them anywhere else.
 
-**Photo Export Fixer** reads Google's JSON sidecar files and applies that metadata to your actual photos and videos—fixing creation dates, embedding GPS coordinates, and adding people tags. Your files come out organized, properly dated, and with metadata embedded in standard formats that any photo application can read.
+Photo Export Fixer reads those JSON sidecar files and applies the metadata back to your actual photos and videos. Your originals are never modified -- everything gets copied to a new output folder with corrected dates, embedded GPS coordinates, and people tags written in standard formats that any photo app can read.
 
-## What It Does
+## Table of Contents
 
-- **Fixes dates** — Sets file creation/modification timestamps from Google's metadata
-- **Embeds GPS coordinates** — Writes location data into EXIF so any photo app can read it
-- **Embeds people tags** — Face recognition names get written to standard XMP fields
-- **Preserves your folder structure** — Albums stay as albums
-- **Handles Google's quirks** — Deals with truncated filenames, `-edited` variants, duplicate naming, and other Takeout oddities
-- **Never touches your originals** — Everything gets copied to a new folder
-
-## Quick Start
-
-```bash
-# Clone and install
-git clone https://github.com/CrackinLLC/Photo-Export-Fixer.git
-cd Photo-Export-Fixer
-pip install -r requirements.txt
-
-# Run it
-python pef.py --path "/path/to/your/takeout"
-```
-
-Your processed files end up in a new folder next to your source, named `<source>_processed`.
+- [Installation](#installation)
+- [Using the GUI](#using-the-gui)
+- [Using the Command Line](#using-the-command-line)
+- [Preparing Your Google Takeout](#preparing-your-google-takeout)
+- [What Gets Fixed](#what-gets-fixed)
+- [Output Structure](#output-structure)
+- [Resuming Interrupted Processing](#resuming-interrupted-processing)
+- [Motion Photos](#motion-photos)
+- [The Suffix System](#the-suffix-system)
+- [Verifying Results](#verifying-results)
+- [Troubleshooting](#troubleshooting)
+- [Python API](#python-api)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Installation
 
-**Python 3.9+** required.
+**Requires Python 3.9 or later.**
 
 ```bash
 git clone https://github.com/CrackinLLC/Photo-Export-Fixer.git
@@ -37,58 +31,119 @@ cd Photo-Export-Fixer
 pip install -r requirements.txt
 ```
 
-For GPS and people tag embedding, you'll also need **ExifTool**:
+### ExifTool (optional but recommended)
 
-| Platform | Installation                                    |
-| -------- | ----------------------------------------------- |
-| Windows  | Automatic—downloaded on first run to `./tools/` |
-| macOS    | `brew install exiftool`                         |
-| Linux    | `sudo apt install libimage-exiftool-perl`       |
+ExifTool is needed to embed GPS coordinates and people tags into your photos. Without it, PEF still fixes file dates -- you just won't get location or people metadata written into the files.
 
-If ExifTool isn't available, dates still get fixed—you just won't get the embedded GPS/people metadata.
+| Platform | How to install |
+|----------|----------------|
+| Windows  | Nothing to do -- PEF downloads it automatically on first run |
+| macOS    | `brew install exiftool` |
+| Linux    | `sudo apt install libimage-exiftool-perl` |
 
-## Usage
+## Using the GUI
 
-### Graphical Interface (GUI)
-
-For a point-and-click experience:
+The GUI is the easiest way to use PEF. Launch it with:
 
 ```bash
 python pef_gui.py
 ```
 
-Or with the main script:
+Or equivalently:
 
 ```bash
 python pef.py --gui
 ```
 
-The GUI provides all the same options as the command line in an easy-to-use window. It works on Windows, macOS, and Linux.
+> **Linux users:** You may need to install tkinter first: `sudo apt install python3-tk`
 
-**Note for Linux users:** You may need to install tkinter separately:
-```bash
-sudo apt install python3-tk  # Ubuntu/Debian
+### Step-by-step walkthrough
+
+**1. Select your source directory**
+
+Click **Browse** next to "Source Directory" and navigate to the folder containing your extracted Google Takeout files. This should be the folder that contains subfolders like `Google Photos/`, album folders, and the `.json` sidecar files.
+
+**2. Set a destination (optional)**
+
+The destination defaults to `<source folder>_processed`. You can change it or leave it blank. The folder will be created if it doesn't exist.
+
+**3. Click Preview (recommended)**
+
+Before processing anything, click the **Preview** button. PEF will scan your source folder and show you a summary:
+
+```
+Found:
+  5,234 JSON metadata files
+  5,108 media files
+
+Would process:
+  5,100 files with matching metadata
+  134 JSONs without matching file
+  8 files without matching JSON
+
+Metadata available:
+  3,205 files with GPS coordinates
+  2,456 files with people tags
+
+ExifTool: Enabled (will write GPS/people tags)
 ```
 
-### Command Line - Basic Processing
+This reads your files without copying or modifying anything. Use it to confirm PEF found your Takeout data correctly before committing to a full run.
+
+**4. Click Start**
+
+PEF will confirm the destination path, then begin processing. You'll see a progress view showing:
+
+- Current phase (Scanning, Processing, Copying unmatched)
+- A progress bar with file count and percentage
+- Elapsed time per phase and total
+
+When processing completes, a summary dialog shows the results and offers to open the output folder.
+
+### Advanced options
+
+Click **Advanced Options** in the GUI to expand additional settings:
+
+| Option | What it does |
+|--------|-------------|
+| **Write EXIF metadata** | Embed GPS coordinates and people tags into files. Requires ExifTool. Enabled by default when ExifTool is available. |
+| **Start fresh** | Ignore any saved progress from a previous interrupted run and start over. |
+| **Verbose logging** | Log every operation to `_pef/verbose.txt`, not just errors. Useful for debugging. |
+| **Rename .MP to .MP4** | Rename motion photo sidecar files from `.MP` to `.MP4` for better compatibility with video players (e.g., Immich). |
+
+The GUI also shows the current ExifTool status. On Windows, if ExifTool isn't found, you can click **Install** to download it automatically. On macOS/Linux, a **How to Install** button shows platform-specific instructions.
+
+### Cancelling and resuming
+
+You can click **Cancel** during processing. PEF will save your progress, and you can resume later by clicking **Start** again with the same source and destination. If cancellation takes too long (more than 30 seconds), a **Force Quit** button appears.
+
+If you close the window during processing, progress is saved automatically.
+
+## Using the Command Line
+
+### Basic usage
 
 ```bash
-python pef.py --path "/path/to/takeout"
+python pef.py --path "/path/to/your/takeout"
 ```
 
-Or run without arguments for an interactive prompt:
+Output goes to `<source>_processed` by default. To specify a destination:
+
+```bash
+python pef.py --path "/path/to/your/takeout" --destination "/path/to/output"
+```
+
+If you run without arguments, PEF prompts you for the path interactively:
 
 ```bash
 python pef.py
-# → Enter path to your folder with takeouts:
+# Enter path to your folder with takeouts: _
 ```
 
-### Preview First (Recommended)
-
-Before processing a large collection, preview what will happen:
+### Preview before processing
 
 ```bash
-python pef.py --path "/path/to/takeout" --dry-run
+python pef.py --path "/path/to/your/takeout" --dry-run
 ```
 
 Output:
@@ -97,25 +152,25 @@ Output:
 === DRY RUN MODE ===
 No files will be copied or modified.
 
-Source: /path/to/takeout
+Source: /path/to/your/takeout
 Found:
-  5234 JSON metadata files
-  5108 media files
+  5,234 JSON metadata files
+  5,108 media files
 
 Would process:
-  5100 files with matching JSON
+  5,100 files with matching JSON
   134 JSONs without matching file
   8 files without matching JSON
 
 Metadata available:
-  3205 files with GPS coordinates
-  2456 files with people tags
+  3,205 files with GPS coordinates
+  2,456 files with people tags
 
 ExifTool: Found at /usr/local/bin/exiftool
 === END DRY RUN ===
 ```
 
-### All Options
+### All CLI options
 
 ```
 python pef.py --help
@@ -123,192 +178,304 @@ python pef.py --help
 Options:
   -p, --path PATH          Source folder containing Takeout data
   -d, --destination PATH   Output folder (default: <source>_processed)
-  -s, --suffix SUFFIX      Extra filename suffixes to match (can repeat)
+  -s, --suffix SUFFIX      Extra filename suffixes to match (repeatable)
   --dry-run                Preview without making changes
-  --no-exif                Skip GPS/people embedding (faster)
+  --no-exif                Skip GPS/people embedding (faster, dates still fixed)
   --rename-mp              Rename .MP motion photo files to .MP4
   --force                  Ignore saved progress, start fresh
   -v, --verbose            Log all operations, not just errors
-  -V, --version            Show version
+  -V, --version            Show version number
+  --gui                    Launch the graphical interface instead
 ```
 
-## Resumable Processing
+### CLI examples
 
-If processing gets interrupted, run the same command again and PEF picks up where it left off.
+Process a Takeout export, skipping EXIF writing for speed:
 
 ```bash
-# Started processing, hit Ctrl+C halfway through
-python pef.py --path "/path/to/takeout"
-# "Interrupted! Saving progress..."
-
-# Later, run the same command
-python pef.py --path "/path/to/takeout"
-# "Resuming: 2500 files already processed"
-# Continues from where it stopped...
+python pef.py --path "D:/Photos/Takeout" --no-exif
 ```
 
-To start fresh instead of resuming, use `--force`:
+Process with an additional suffix for sticker variants:
 
 ```bash
-python pef.py --path "/path/to/takeout" --force
+python pef.py --path "D:/Photos/Takeout" -s "-sticker"
 ```
+
+Resume a previously interrupted run:
+
+```bash
+# Same command as before -- PEF detects saved progress automatically
+python pef.py --path "D:/Photos/Takeout"
+```
+
+Force a fresh start, ignoring saved progress:
+
+```bash
+python pef.py --path "D:/Photos/Takeout" --force
+```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0    | Success |
+| 1    | Error (bad path, invalid arguments, or cancelled wizard) |
+| 2    | Completed with some file-level errors |
+| 130  | Interrupted by Ctrl+C (progress saved) |
+
+## Preparing Your Google Takeout
+
+1. Go to [Google Takeout](https://takeout.google.com/)
+2. Click **Deselect all**, then scroll down and select only **Google Photos**
+3. Choose your preferred export format and file size (`.zip`, 2GB chunks is common)
+4. Google will email you download links when the export is ready
+5. Download all zip files
+6. Extract everything into a single folder
+7. Point PEF at that folder
+
+The folder structure from Takeout typically looks something like:
+
+```
+My Takeout/
+├── Google Photos/
+│   ├── Album Name/
+│   │   ├── photo.jpg
+│   │   ├── photo.jpg.json
+│   │   ├── photo-edited.jpg
+│   │   └── ...
+│   ├── Photos from 2023/
+│   │   └── ...
+│   └── ...
+```
+
+Point PEF at the top-level folder that contains everything.
+
+**Tip:** Keep only photo-related content in the source folder. Other files won't cause problems, but they'll slow down scanning and show up in the unprocessed report.
+
+## What Gets Fixed
+
+For each photo/video that has a matching JSON sidecar:
+
+| Metadata | Where it comes from | Where it gets written |
+|----------|--------------------|-----------------------|
+| **Date taken** | `photoTakenTime.timestamp` in JSON | File creation and modification timestamps |
+| **GPS coordinates** | `geoData.latitude/longitude/altitude` in JSON | EXIF GPS tags (`GPSLatitude`, `GPSLongitude`, etc.) |
+| **People tags** | `people[].name` in JSON | Written to four formats for broad compatibility: XMP `PersonInImage`, IPTC `Keywords`, XMP `Subject`, and Windows `XPKeywords` |
+| **Description** | `description` in JSON | EXIF `ImageDescription`, IPTC `Caption-Abstract`, XMP `Description` |
+
+GPS and people tags require ExifTool. Date correction works without it.
+
+### Google Takeout quirks PEF handles
+
+- **Filename truncation:** Google truncates filenames at 51 UTF-8 bytes, sometimes splitting multi-byte characters. PEF uses byte-aware matching to handle this.
+- **Duplicate numbering:** When multiple files share a name, Google appends `(1)`, `(2)`, etc. to the JSON filename but places the number differently in the media filename. PEF handles both conventions.
+- **Edited variants:** `photo.jpg` and `photo-edited.jpg` share a single `photo.jpg.json`. PEF finds all variants and applies the same metadata to each.
+- **GPS placeholder (0, 0):** Google uses coordinates `(0.0, 0.0)` to mean "no location data." PEF recognizes this and skips writing GPS tags for these files.
+- **Unicode normalization:** macOS and Windows use different Unicode representations (NFD vs NFC). PEF normalizes all filenames to NFC for consistent cross-platform matching.
+- **Case mismatches:** If a JSON refers to `IMG_1234.JPG` but the file is `IMG_1234.jpg`, PEF will still match them.
 
 ## Output Structure
-
-After processing:
 
 ```
 YourTakeout_processed/
 ├── Album Name/
-│   ├── photo1.jpg           (with corrected dates + embedded metadata)
+│   ├── photo1.jpg              # dates corrected, GPS + people embedded
 │   ├── photo2.jpg
 │   └── video.mp4
-├── Photos from 2019/
+├── Photos from 2023/
 │   └── ...
 ├── Trip to Iceland/
 │   └── ...
 └── _pef/
-    ├── summary.txt          (processing summary)
-    ├── verbose.txt          (detailed log, only with --verbose)
-    ├── unprocessed.txt      (files without matching metadata)
-    ├── motion_photos.txt    (info about .MP sidecar files)
-    ├── unmatched_data/      (JSON files that didn't match any media)
-    │   └── ...
-    └── processing_state.json (for resume capability)
+    ├── summary.txt             # what happened (always created)
+    ├── verbose.txt             # detailed per-file log (with --verbose)
+    ├── unprocessed.txt         # files without matching metadata
+    ├── motion_photos.txt       # info about .MP sidecar files
+    ├── processing_state.json   # saved progress for resume
+    └── unmatched_data/         # JSON files with no matching media
+        └── ...
 ```
 
-All files—both matched and unmatched—are copied to the output directory, preserving the original album/folder structure. Files without matching JSON metadata are listed in `_pef/unprocessed.txt` so you can review them.
+All files are copied to the output folder -- both matched and unmatched -- preserving the original album/folder structure. Your source folder is never modified.
+
+After a run, check `_pef/summary.txt` for an overview and `_pef/unprocessed.txt` if you want to understand which files didn't have matching metadata.
+
+## Resuming Interrupted Processing
+
+PEF saves progress during processing. If the operation gets interrupted (Ctrl+C, closing the window, power failure), run the same command or click Start again and PEF picks up where it left off:
+
+```bash
+# First attempt -- interrupted partway through
+python pef.py --path "/path/to/takeout"
+# Interrupted! Saving progress...
+
+# Later -- same command resumes automatically
+python pef.py --path "/path/to/takeout"
+# Resuming: 2,500 files already processed
+# Continues from where it stopped...
+```
+
+In the GUI, the progress view shows a "Prior session progress" line indicating how many files were processed in the previous run.
+
+To discard saved progress and start over, use `--force` on the CLI or check **Start fresh** in the GUI's Advanced Options.
 
 ## Motion Photos
 
-Google Photos stores motion photos (short video clips captured with still images) as separate `.MP` files alongside the `.jpg`. These files don't have their own JSON metadata—they're associated with the parent image.
+Google Photos captures short video clips alongside still images and stores them as `.MP` or `.MP~2` files. These don't have their own JSON metadata -- they're associated with the parent image.
 
-PEF copies these files alongside your photos. If you're importing to a platform that doesn't recognize the `.MP` extension, use `--rename-mp` to rename them to `.MP4`:
+PEF copies these files alongside your photos and lists them in `_pef/motion_photos.txt`. If you're importing into a platform that doesn't recognize `.MP` files (like Immich), use the **Rename .MP to .MP4** option:
 
 ```bash
 python pef.py --path "/path/to/takeout" --rename-mp
 ```
 
-Motion photo files found during processing are listed in `_pef/motion_photos.txt`.
-
 ## The Suffix System
 
 Google sometimes creates multiple versions of a photo that share a single JSON file. For example, `photo.jpg` and `photo-edited.jpg` both use `photo.jpg.json` for their metadata.
 
-By default, PEF handles `""` (original) and `"-edited"`. When a JSON file is processed, all matching variants receive the same metadata.
+By default, PEF handles `""` (original filename) and `"-edited"`. When a JSON file is processed, PEF finds all matching variants and applies the same metadata to each.
 
-If you notice files in `_pef/unprocessed.txt` with patterns like `photo-sticker.jpg`, you can add that suffix:
+If you see files in `_pef/unprocessed.txt` with a consistent pattern like `photo-sticker.jpg`, you can add that suffix:
 
 ```bash
 python pef.py --path "/path/to/takeout" -s "-sticker"
 ```
 
-Multiple suffixes can be specified:
+Multiple suffixes can be combined:
 
 ```bash
 python pef.py --path "/path/to/takeout" -s "-sticker" -s "-effects"
 ```
 
-**Note:** Only add suffixes you've actually verified in your export. Adding incorrect suffixes can cause wrong metadata to be applied to unrelated files.
+**Be careful:** only add suffixes you've actually confirmed in your export. An incorrect suffix could cause the wrong metadata to be applied to an unrelated file.
 
-## Why Files End Up Unprocessed
+## Verifying Results
 
-Files appear in `_pef/unprocessed.txt` when:
+After processing, you can confirm that metadata was applied correctly:
 
-1. **No matching JSON** — The file exists but Google didn't provide metadata for it
-2. **JSON exists, file doesn't** — Metadata refers to a file that's missing (sometimes happens with split exports)
-3. **Album metadata** — Some JSONs describe the album itself, not a specific file
-4. **Motion photo sidecars** — `.MP` files don't have their own JSON
-5. **Filename encoding issues** — Files with special characters sometimes get mangled during export
+1. **Check the summary:** Open `_pef/summary.txt` in the output folder. It shows total files processed, how many got GPS data, how many got people tags, and any errors.
 
-Review `_pef/unprocessed.txt` after a run. If you see patterns (many `-sticker` files, for example), consider adding that suffix and reprocessing.
+2. **Check file dates:** Browse the output folder and sort by date. Photos should now show their original taken date instead of the export date.
 
-## How It Works
+3. **Check GPS data:** Open a photo that should have location info in any photo viewer that displays EXIF data (Windows: right-click > Properties > Details; macOS: Preview > Tools > Show Inspector). Look for GPS Latitude/Longitude fields.
 
-1. **Scans** your Takeout folder for all JSON metadata files and media files
-2. **Indexes** everything for fast lookup (dictionary-based, O(1) matching)
-3. **Matches** each JSON to its corresponding media file(s), handling Google's filename quirks
-4. **Copies** all files to the output folder, preserving album structure
-5. **Fixes timestamps** on matched files using `photoTakenTime` from the JSON
-6. **Embeds metadata** (GPS, people) via ExifTool if available
-7. **Tracks unmatched items** for review
-8. **Logs** what happened so you can verify the results
-
-Performance is a priority—dictionary-based matching, batched ExifTool writes, and parallel file operations keep processing fast even for large collections.
-
-## Preparing Your Takeout
-
-1. Go to [Google Takeout](https://takeout.google.com/)
-2. Select only Google Photos (smaller download, faster processing)
-3. Choose your preferred archive format and size
-4. Download all the zip files
-5. Extract everything into a single folder
-6. Point PEF at that folder
-
-**Tip:** Keep only photo-related content in the source folder. Other files won't cause problems, but they'll slow down scanning and appear in unprocessed.txt.
+4. **Review unprocessed files:** Open `_pef/unprocessed.txt` to see which files didn't have matching metadata. Common reasons:
+   - No matching JSON (Google didn't provide metadata for this file)
+   - Motion photo sidecar (`.MP` files don't have their own JSON)
+   - Album metadata JSON (describes the album, not a specific file)
+   - Files from a split export where the JSON is in a different zip
 
 ## Troubleshooting
 
 ### "No JSON metadata files found"
 
-Your source folder doesn't look like a Takeout export. Make sure you're pointing at the extracted contents, not the zip file itself.
+PEF didn't find any `.json` files in the source directory. Make sure you're pointing at the extracted Takeout contents, not the zip file itself. The source folder should contain subfolders with `.json` files alongside the photos.
 
-### Many unprocessed files with `-edited` suffix
+### Many files in unprocessed.txt
 
-This is handled by default. Check if there's a different pattern in your unprocessed files.
+This is normal for Takeout exports. Check the file for patterns:
+- If many share a suffix like `-sticker`, add it with `-s "-sticker"` and reprocess.
+- If they're `.MP` files, those are motion photo sidecars and are expected.
+- If they're from a split Takeout download, make sure all zip files were extracted into the same folder.
 
 ### ExifTool not found (Windows)
 
-Should auto-download on first run. If that fails, manually download from [exiftool.org](https://exiftool.org/) and place it in `./tools/exiftool/`.
+PEF tries to download ExifTool automatically on Windows. If that fails (usually a network issue):
+1. Download manually from [exiftool.org](https://exiftool.org/)
+2. Place the `exiftool.exe` file in `./tools/exiftool/` inside the PEF directory
+3. Restart PEF
 
-### Windows: "File not found" errors with long paths
+### ExifTool not found (macOS / Linux)
 
-Windows has a default path length limit of 260 characters. Google Takeout exports with deeply nested albums and long Unicode filenames can exceed this limit.
+Install via your package manager:
+```bash
+# macOS
+brew install exiftool
 
-PEF automatically adds the `\\?\` extended-length prefix for paths that approach this limit, which allows paths up to ~32,767 characters. This works transparently with no action required.
+# Ubuntu/Debian
+sudo apt install libimage-exiftool-perl
 
-Alternatively, you can enable long path support system-wide:
+# Fedora
+sudo dnf install perl-Image-ExifTool
+```
 
-1. Open **Registry Editor** (regedit)
+### "File not found" errors with long paths (Windows)
+
+Windows has a 260-character path limit by default. PEF handles this automatically by using extended-length path prefixes, but you can also enable long path support system-wide:
+
+**Option A:** Registry (requires admin + restart):
+1. Open **regedit**
 2. Navigate to `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\FileSystem`
 3. Set `LongPathsEnabled` to `1`
 4. Restart your computer
 
-Or run this from an elevated PowerShell:
+**Option B:** PowerShell (requires admin):
 ```powershell
 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
 ```
 
-### Processing is slow
+### Processing seems slow
 
-- Use `--no-exif` if you only need date correction (significantly faster)
-- Avoid running from network drives
-- SSDs are much faster than HDDs for this workload
+- Use `--no-exif` (CLI) or uncheck **Write EXIF metadata** (GUI) if you only need date correction. Skipping EXIF writing is significantly faster.
+- Avoid running from network drives -- local SSDs are much faster for this workload.
+- Large collections (50,000+ files) will naturally take a while. PEF uses parallel file copying and batched metadata writes to keep things moving.
 
-### Files have wrong dates
+### Files have wrong dates after processing
 
-Usually means a suffix matched files it shouldn't have. Be conservative with `-s` flags—only add patterns you've verified.
+Usually means a suffix matched files it shouldn't have. Be conservative with `-s` flags -- only add patterns you've confirmed in your export. You can reprocess with `--force` after removing the problematic suffix.
+
+## Python API
+
+PEF can be used as a library in your own Python scripts:
+
+```python
+from pef import PEFOrchestrator
+
+orchestrator = PEFOrchestrator(
+    source_path="/path/to/takeout",
+    dest_path="/path/to/output",
+    write_exif=True,
+    verbose=False,
+    rename_mp=False,
+)
+
+# Preview first
+result = orchestrator.dry_run()
+print(f"Found {result.matched_count} files to process")
+print(f"  {result.with_gps} with GPS, {result.with_people} with people tags")
+
+# Process
+result = orchestrator.process()
+print(f"Processed {result.stats.processed} files")
+```
+
+The `process()` method accepts an `on_progress` callback for tracking progress and a `cancel_event` (`threading.Event`) for cooperative cancellation.
 
 ## Requirements
 
-- Python 3.9 or later
-- Dependencies in `requirements.txt`:
-  - `filedate` (timestamp modification)
-  - `pyexiftool` (ExifTool integration)
-  - `orjson` (fast JSON parsing, optional but recommended)
-- ExifTool (optional, for GPS/people metadata)
-
-## Future Enhancements
-
-- **Multi-service support** — Extend beyond Google Takeout to support exports from Amazon Photos, iCloud, Facebook, and other services. Each service has its own metadata format and directory structure, so this will use a provider-based architecture that can be extended for new services.
+- **Python 3.9+**
+- **Dependencies** (installed via `pip install -r requirements.txt`):
+  - `filedate` -- cross-platform file timestamp modification
+  - `pyexiftool` -- Python wrapper for ExifTool
+  - `tqdm` -- CLI progress bars
+  - `orjson` -- fast JSON parsing (falls back to stdlib `json` if unavailable)
+- **ExifTool** (optional) -- for GPS and people tag embedding
 
 ## Contributing
 
-Found a bug or have a feature request? Contributions are welcome.
+Found a bug or have a feature request?
 
 - [Open an issue](https://github.com/CrackinLLC/Photo-Export-Fixer/issues)
 - Fork, branch, and submit a PR
 
+To run the test suite:
+
+```bash
+pip install -r requirements.txt
+pytest
+```
+
 ## License
 
-MIT License. See LICENSE file for details.
+MIT License. See [LICENSE](LICENSE) for details.
